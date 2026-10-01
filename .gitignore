@@ -1,0 +1,12 @@
+# Godot 4 import cache / local editor state
+.godot/
+
+# macOS
+.DS_Store
+
+# Claude Code local settings (personal, not shared)
+.claude/settings.local.json
+
+# Export artifacts
+export.cfg
+export_presets.cfg
