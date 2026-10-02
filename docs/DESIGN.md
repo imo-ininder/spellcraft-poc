@@ -67,7 +67,7 @@
 這是整個 PoC 的靈魂，以下記錄所有已拍板的設計決策與原因，**修改這部分任何數值前請先理解原因**。
 
 ### 3.1 基本流程
-1. 玩家按住滑鼠左鍵 → 進入吟唱狀態，開始倒數 `CAST_DURATION`（目前 2.0 秒），角色鎖定移動。
+1. 玩家按住滑鼠左鍵 → 進入吟唱狀態，開始倒數裝備中法術的 `cast_time`（目前唯一的 `Fireball.tres` 是 2.0 秒，見 `SPELL_SYSTEM.md`），角色鎖定移動。
 2. 吟唱期間，WASD 不再移動角色，而是輸入方向鍵：上(U)/下(D)/左(L)/右(R)。
 3. 玩家按下的鍵會不斷接到一個緩衝字串 `combo_buffer` 後面，去比對符紋組合表 `RUNE_COMBOS`。
 4. 命中完整組合 → 觸發對應強化效果，疊加進 `accumulated_runes`。
@@ -121,53 +121,110 @@
 | 按鍵序列 | 效果 | 數值 | 鍵數（難度） |
 |---|---|---|---|
 | `UU`（上上） | +傷害 | damage_mult +0.5 | 2 |
-| `DD`（下下） | +穿透 | pierce +1 | 2 |
-| `LR` / `RL`（左右/右左） | +彈速 | speed_mult +0.6 | 2 |
 | `UDU`（上下上） | +強力傷害 | damage_mult +1.2 | 3 |
-| `UULR`（上上左右） | +終極爆發 | damage_mult +1.8, pierce +2 | 4，且與 `UU` 共享前綴（刻意設計用來測試 pending 機制） |
+| `UULR`（上上左右） | +終極爆發 | damage_mult +1.8 | 4，且與 `UU` 共享前綴（刻意設計用來測試 pending 機制） |
+| `RR`（右右，`>>`） | +吟唱速度 | cast_speed_bonus +0.5 | 2 |
+| `LL`（左左，`<<`） | -吟唱速度 | cast_speed_bonus -0.5 | 2 |
 
-最終傷害計算（`Player.gd:_fire_spell`）：以 `BASE_DAMAGE`(10) 為基底，逐個符紋疊加 `damage * damage_mult`（非最終值相乘，是對目前傷害值累加百分比），`pierce` 與 `speed_mult` 同理累加。這組公式僅為 PoC 示範，未做平衡。
+> 原本還有 `DD`（+穿透）、`LR`/`RL`（+彈速），`UULR` 原本也帶 `pierce +2`。穿透因為遊戲定調「純 PVE、一次只打一隻王」完全沒有使用情境已移除（見 `SPELL_SYSTEM.md` §8.7）；彈速則是因為法術改成「固定時間內飛到最大距離」的模型，速度變成由 `max_range`／`travel_time` 反推出來的結果，不再是獨立可疊加的數值，所以整個「彈速」維度也拿掉了（見 `SPELL_SYSTEM.md` §8.8）。
+
+`RR`/`LL` 是第一個不影響最終發射數值、而是**即時改變讀條本身消耗速度**的符紋。`Player.gd:cast_speed_bonus` 是「速度調整值的總和」（0.0＝正常，單位跟百分比對應，+1.0＝+100%），不是直接拿來當倍率乘的那個數——**實際吟唱時長 ＝ base_cast_time / (1 + cast_speed_bonus)**，`cast_speed_bonus = 1.0`（+100%）時時長正好變成一半，這是刻意比照 ARPG 常見的「增減速％用倒數公式疊加」設計（而不是直接線性砍時長，線性砍法在疊加多個減速效果時容易讓時長變成 0 或負數）。實作上因為要逐 frame 消耗 `cast_timer`（剩餘吟唱時間），所以反過來用消耗速率 `cast_timer -= delta * (1 + cast_speed_bonus)`——這跟「時長變成 1/(1+cast_speed_bonus)」是同一件事的兩種寫法（速率跟時長互為倒數），`cast_speed_bonus` 在 `_commit_combo` 當下立即疊加生效，不是等吟唱結束才套用。`cast_speed_bonus` 下限 clamp 在 -0.9（而不是對最終倍率設一個隨意的下限），避免疊太多 `LL` 讓 `(1+cast_speed_bonus)` 變成 0 或負數、讀條卡死或倒退。這也是「快唱／慢唱」兩種 Build 構想（見 §1.4）第一次有實際機制支撐，差別是 §1.4 原本設想的是裝備被動的長期選擇，`RR`/`LL` 則是單次吟唱內的即時決策——兩者不衝突，之後裝備系統上線時可以共存（被動影響基礎 `cast_time`，符紋影響單次吟唱內的即時 `cast_speed_bonus`）。
+
+最終傷害計算（`Player.gd:_fire_spell`）：基底傷害現在來自 `resources/spells/Fireball.tres` 裡 `DamageEffect.min_amount`/`max_amount`（8~12，每次施放隨機抽一個值，法術系統架構 v1 已實作，見 `SPELL_SYSTEM.md` §8），逐個符紋疊加 `damage * damage_mult`（非最終值相乘，是對目前傷害值累加百分比，符紋加成本身不是隨機值）。這組公式僅為 PoC 示範，未做平衡。
 
 ---
 
 ## 4. 其他已實作系統
 
 ### 4.1 右鍵瞬發法術
-- 固定傷害 `BASE_DAMAGE * 0.8`，不經過吟唱/符紋強化，純粹測試「有 CD 的即時手段」存在時的節奏感。
+- 固定傷害＝裝備中法術的基礎傷害（`base_effects` 算出的 `damage`，不套用符紋）乘上 `Player.gd:INSTANT_CAST_DAMAGE_MULT`（0.8），不經過吟唱/符紋強化，純粹測試「有 CD 的即時手段」存在時的節奏感。
 - CD 固定 `RIGHTCLICK_CD = 3.0` 秒，UI 顯示冷卻進度條與剩餘秒數。
 - 定位：補刀/保命用的簡單技能，玩家在 Boss 戰立回時可用，不需要承擔符紋輸入風險。
+- **瞬發跳過的只是吟唱/符紋累積那段，不是 delivery 本身的運作方式**——如果裝備中法術是「鎖定選點」類型（例如火球），右鍵瞬發一樣會暫停遊戲等你選位置，只是不用先吟唱、傷害用固定倍率。第一版做錯把這個也跳過了，已經修正，見 `SPELL_SYSTEM.md` §8.14。
 
-### 4.2 投射物與受擊
-- `SpellProjectile.gd`：直線飛行，依據 `pierce` 決定可穿透次數，命中有法術效果的物件（實作 `take_damage` 方法）就扣血並噴粒子特效。
-- `TargetDummy.gd`：固定假目標，有 HP 條、受擊閃色、Q 版彈跳變形動畫（squash & stretch）、飄浮傷害數字。打到 0 血目前直接重置滿血，方便連續測試，**非正式死亡/擊殺邏輯**。
+### 4.2 法術與受擊
+目前有三把法術（`resources/spells/*.tres`），按住 Ctrl 用輪盤切換裝備（見 §4.4，取代了舊的數字鍵暫時方案）：
+
+1. **火球術（`Fireball.tres`）**：`AoETargetingDelivery`。鎖定選點的範圍法術，不是投射物——吟唱結束後（或右鍵瞬發，兩者都一樣）暫停遊戲、顯示跟隨滑鼠的指示圈（受 `max_range`=500 限制，超出範圍鎖在邊界），確認後對選定點 90px 範圍內所有 `enemies` 群組成員造成傷害（見 `SPELL_SYSTEM.md` §8.13、§8.14）。
+2. **力場波（`ForceWave.tres`）**：`SelfDelivery`，以施法者自己為中心，瞬間對半徑 140px 內所有敵人造成傷害並擊退（`knockback_force=500`）。沒有飛行階段，吟唱結束當下直接判定，不經過投射物。
+3. **雷電箭（`LightningBolt.tres`）**：`ProjectileDelivery` + `PiercingImpact`（無限穿透，不是符紋疊加的，是法術天生行為）+ `bounces_off_walls=true`（碰到場地邊界會反彈，用位置判斷而非物理碰撞，不影響其他法術）+ `fixed_speed=700`（固定飛行速度，不是用 `max_range`/`travel_time` 反推——`max_range`=1800 是給反彈用的總路徑長度上限，不是「終點距離」，兩者語意不同，見 `SPELL_SYSTEM.md` §8.12）。命中敵人不會消失，只有累計飛行距離耗盡才結束。
+
+`SpellProjectile.gd`（投射物類法術共用，目前只有雷電箭在用）：直線飛行，命中東西或飛行距離耗盡時，把「接下來要發生什麼事」委派給自己的 `impact`（`ProjectileImpact` 變體：`SingleHitImpact`/`ExplosiveImpact`/`PiercingImpact`，見 `SPELL_SYSTEM.md` §8.6、§8.10），自己不內建爆炸/穿透邏輯。飛行速度預設是固定要在 `delivery.travel_time` 秒內飛完 `max_range` 反推出來的（見 `SPELL_SYSTEM.md` §8.8），但 `fixed_speed>0` 時會直接用固定值蓋過這套反推邏輯（§8.12）。`ExplosiveImpact`/`SingleHitImpact` 目前都還沒有法術在用，架構上保留著，不是沒用該刪。
+
+`TargetDummy.gd`：固定假目標，有 HP 條、受擊閃色、Q 版彈跳變形動畫（squash & stretch）、飄浮傷害數字、跳躍+範圍落地攻擊的簡易 AI（`AiState`），已加入 `enemies` 群組供範圍型法術查詢命中對象。新增 `apply_knockback()`：獨立於 AI 狀態機的位移層，`ForceWave` 擊退時用摩擦力衰減速度、clamp 在場地範圍內，不會影響 AI 自己的跳躍動畫邏輯。打到 0 血目前直接重置滿血，方便連續測試，**非正式死亡/擊殺邏輯**。
 
 ### 4.3 視覺風格（Magicka 調性落地）
 全部用 Godot `_draw()` 程式繪圖 + `CPUParticles2D` 動態生成，無外部美術資源：
 - **角色**：Q 版長袍法師（三角形長袍、尖帽子會隨時間輕微搖晃、法杖頭發光球在吟唱時脈動），吟唱中有脈動光環，符紋成功/失敗時角色主體變色並噴對應顏色粒子爆發。
-- **投射物**：發光球體拖著粒子軌跡飄浮光點環繞旋轉，顏色依效果而變（穿透=藍、高速=綠、預設=黃）。
+- **投射物**：預設是發光球體拖著粒子軌跡飄浮光點環繞旋轉，顏色依 `impact` 變體而變（爆炸=橘、預設=黃）；`PiercingImpact`（雷電箭）改用專用畫法——沿飛行方向拖出一條會抖動的鋸齒長條（電光藍，頭尖尾散），不是圓點，`SpellProjectile.gd:_draw_bolt()`。
 - **假目標**：紫色水晶怪物造型，受擊閃紅並有彈性擠壓動畫。
 - **場景**：深紫色背景，營造奇幻氛圍。
-- 共用特效邏輯集中在 `MagicFX.gd`（`class_name MagicFX`），提供 `spawn_burst()`（爆發粒子）與 `make_sparkle_trail()`（拖尾粒子）兩個 static 工具方法，供角色/投射物共用。
+- 共用特效邏輯集中在 `MagicFX.gd`（`class_name MagicFX`），提供 `spawn_burst()`（爆發粒子）、`make_sparkle_trail()`（拖尾粒子）、`spawn_explosion_ring()`（範圍特效用的擴張淡出圈）三個 static 工具方法，供角色/投射物/法術共用。
+
+### 4.4 法術切換輪盤（`DEMO_GOALS.md` §3、§7.4）
+- 按住 Ctrl（`Input.is_key_pressed(KEY_CTRL)`，沒有另外設 Input Map action）彈出輪盤，`Engine.time_scale` 降到 0.25（子彈時間，不是暫停，怪物跟場上一切持續運作只是變慢）；放開 Ctrl **或**點擊左鍵都會確認並收起輪盤，兩種收起方式都生效。
+- 選取判定：以 Ctrl 剛按下那一刻的滑鼠位置為輪盤中心（不是螢幕中心、也不是角色位置），之後滑鼠相對中心的角度決定選中哪一格——正上方＝第 0 格，依序順時針分配，離中心小於 12px 不選取任何一格（維持原裝備）。角度公式在 `Player.gd:_update_wheel_hover()` 跟畫圖用的 `scripts/ui/SpellWheel.gd:_draw()` 必須用同一個基準（`-PI/2` 起算、順時針），兩邊已經用 headless 腳本對過，分別改動時要注意別讓基準跑掉。
+- 輪盤開啟時，`Player._physics_process()` 整段提前 `return`，不處理移動/吟唱/右鍵瞬發/CD倒數——唯一能做的操作是選法術。如果開啟輪盤時人物正在吟唱，會直接取消吟唱（`_cancel_casting()`），已累積符紋作廢，不會讓吟唱繼續在背景跑。
+- 法術清單目前是 `Player.gd:equipped_spells`（固定 3 把：火球術/力場波/雷電箭），還沒有大廳裝備系統，所以輪盤顯示的就是這份清單本身，不是「已裝備的 3 個欄位」那套（`DEMO_GOALS.md` §2.5 的 attack/buff/displacement 分類要等真的有對應類型法術才有意義）。
+- `scripts/ui/SpellWheel.gd`：純畫面呈現，不做任何選取判定，`Player.gd` 透過訊號（`spell_wheel_opened`/`spell_wheel_hover_changed`/`spell_wheel_closed`）告訴它要畫什麼、`Main.gd` 負責轉接（跟 `CastBar`/`RuneContainer` 一樣的既有模式）。畫的是**真正的圓盤，依法術數量等分成扇形**（手動建構扇形 polygon，Godot 沒有內建畫扇形的函式），不是三個分開的小圖示。三格顏色對應各自法術在遊戲裡的特效色（火球=橘、力場波=紫、雷電箭=電光藍），目前裝備中的那一格外緣有白色實線標出來，滑鼠懸停的那一格填色加亮。
+
+### 4.5 火球術的選點介面（`AoETargetingReticle.gd`）
+跟輪盤不一樣，這個畫在**世界座標**（施法者周圍的 `max_range` 邊界淡圈、施法者到落點的連線、落點的範圍預覽圈），所以是 `Main`底下跟 `Arena`/`Player` 同層的 `Node2D`，不是 `UI` CanvasLayer 裡的 `Control`。靠 `get_tree().paused = true` 做**真正的暫停**（不是輪盤那種 `Engine.time_scale` 子彈時間），`_ready()` 裡把自己的 `process_mode` 設成 `PROCESS_MODE_ALWAYS` 才能在暫停時繼續讀滑鼠/畫圖/接收確認輸入。左鍵（`cast_spell`）確認，右鍵（`instant_cast`）或 Esc 取消；滑鼠超出 `max_range` 時指示圈會鎖在邊界上並變灰。細節跟設計理由見 `SPELL_SYSTEM.md` §8.13。
+
+### 4.6 基礎 Dash（`DEMO_GOALS.md` §2.4）
+**第一版做錯了兩件事**：
+1. 用 `move_and_collide()` 單次跳到終點，那是 Blink（瞬移），不是 Dash（衝刺）——`DEMO_GOALS.md` §2.4 原文寫「瞬移」其實是描述不準確，已經在這裡糾正，不是照抄原文的錯誤說法。真正的 Dash 是短時間內的高速移動過程：按下空白鍵後，方向定住（過程中不再改變），`DASH_DURATION`（0.12 秒）內用 `DASH_SPEED`（1800 px/s）持續呼叫跟一般移動一樣的 `move_and_slide()`，會自然貼牆滑行、碰到牆就停下，不是瞬間穿過去再被拉回來。用 headless 腳本讓真正的 engine physics tick 跑過（不是手動呼叫函式模擬，那樣會因為 `move_and_slide()` 內部讀的是引擎自己的 tick delta 而失真）：開放空間 8 個 tick 跑完全程，總距離 240px（比理論值 216px 多一點，是 0.12 秒在 60fps 下只能取整數幀的正常誤差，不是 bug）；貼著牆時自然停在牆邊，沒有穿牆。
+2. 方向原本取滑鼠位置，跟施法瞄準用同一個方向來源——但衝刺是移動類動作，該跟著「目前移動方向」（WASD）走，不是滑鼠，兩者語意不同，混用會讓操作感覺不自然。改成 `_start_dash()` 直接讀目前按著的 WASD；站著不動（沒按任何方向鍵）時，用 `last_move_direction`（`_process_movement()` 裡每次有實際移動輸入就更新的最後移動方向），不會因為站著不動就無法衝刺或衝去奇怪的方向。用 headless 腳本驗證過：按著 `move_up` 時衝刺方向是 `(0,-1)`；放開後站著不動，沿用剛剛的 `(0,-1)`；改按 `move_right` 後變成 `(1,0)`，當下輸入永遠優先於上次方向。
+
+目前**只實作了「未裝備位移法術」這個分支**——`DEMO_GOALS.md` §2.4 的另一半（已裝備位移法術時，空白鍵改觸發該法術走 `AoETargetingDelivery` 選點流程）要等真的有位移類法術時才有東西可以接，`equipped_spells` 目前 3 把全是攻擊類，這段分流邏輯還沒有存在的理由。按下空白鍵只在 `_input()` 設一個 `dash_requested` flag，實際觸發延到 `_physics_process()` 做，跟其他移動/物理操作在同一個時機點，吟唱中或輪盤開啟時會被忽略（這兩個狀態本來就鎖定移動），衝刺進行中（`is_dashing`）也不會同時處理一般移動。不走 `Spell`/`SpellDelivery` 架構、不佔用法術欄位、沒有冷卻（如果實測覺得太容易連續衝刺可以再加）。
 
 ---
 
 ## 5. 專案結構
 
+> 目錄依領域分類（`entities`/`spells`/`core`/`fx`），`scripts/`/`scenes/`/`resources/` 三棵樹用同一套分類方式對齊。
+
 ```
-mygame/
-├── project.godot          # Godot 4.6 專案設定，含 input map（WASD、左右鍵）
+spellcraft-poc/
+├── project.godot                       # Godot 4.6 專案設定，含 input map（WASD、左右鍵）
 ├── scenes/
-│   ├── Main.tscn           # 主場景：背景、Player、TargetDummy、UI（吟唱條/符紋顯示/CD條）
-│   ├── Player.tscn         # CharacterBody2D + CollisionShape2D + Camera2D
-│   ├── SpellProjectile.tscn
-│   └── TargetDummy.tscn
-└── scripts/
-    ├── Player.gd           # 移動、吟唱狀態機、符紋判定、發射邏輯、角色繪製（核心檔案）
-    ├── SpellProjectile.gd  # 投射物飛行、碰撞傷害、拖尾特效
-    ├── TargetDummy.gd      # 假目標血量、受擊回饋、繪製
-    ├── Main.gd             # UI 綁定：吟唱進度條、符紋圖示列、CD 條
-    └── MagicFX.gd          # 共用粒子特效工具（class_name，static 方法）
+│   ├── Main.tscn                       # 主場景：背景、Player、TargetDummy、選點介面、UI（吟唱條/符紋顯示/CD條/輪盤）
+│   ├── entities/
+│   │   ├── Player.tscn                 # CharacterBody2D + CollisionShape2D + Camera2D
+│   │   └── TargetDummy.tscn
+│   └── spells/
+│       └── SpellProjectile.tscn        # 投射物類法術共用場景（目前只有雷電箭在用）
+├── scripts/
+│   ├── Main.gd                         # UI 綁定：吟唱進度條、符紋圖示列、CD 條、輪盤轉接
+│   ├── core/
+│   │   └── Arena.gd                    # 場地地板/牆體程式繪圖（class_name Arena，ARENA_WIDTH/HEIGHT 全域常數）
+│   ├── entities/
+│   │   ├── Player.gd                   # 移動、吟唱狀態機、符紋判定、發射邏輯、輪盤選取、角色繪製（核心檔案）
+│   │   └── TargetDummy.gd              # 假目標血量、受擊回饋、怪物 AI 狀態機、擊退位移、繪製
+│   ├── fx/
+│   │   └── MagicFX.gd                  # 共用特效工具（class_name，static 方法：burst/trail/explosion_ring）
+│   ├── ui/
+│   │   ├── SpellWheel.gd               # 法術切換輪盤的畫面呈現（螢幕座標，不做選取判定，見 §4.4）
+│   │   └── AoETargetingReticle.gd      # 火球術選點介面（世界座標，暫停時仍運作，見 §4.5）
+│   └── spells/
+│       ├── Spell.gd                    # 法術定義（Resource）：id/cast_time/max_range/delivery/base_effects
+│       ├── SpellDelivery.gd            # 發射方式基底（Resource），fire() 有 instant 參數供右鍵瞬發用
+│       ├── ProjectileDelivery.gd       # 直線投射物（travel_time 反推速度或 fixed_speed 固定值、可選牆壁反彈）
+│       ├── SelfDelivery.gd             # 以施法者為中心的範圍 delivery（力場波在用）
+│       ├── AoETargetingDelivery.gd     # 鎖定選點的範圍 delivery（火球術在用）
+│       ├── ProjectileImpact.gd         # 投射物「命中/飛行耗盡後要幹嘛」變體基底
+│       ├── SingleHitImpact.gd / ExplosiveImpact.gd / PiercingImpact.gd  # 目前只有 PiercingImpact 有法術在用
+│       ├── SpellEffect.gd              # 命中/疊加效果基底（Resource）
+│       ├── DamageEffect.gd
+│       └── SpellProjectile.gd          # 投射物飛行、碰撞傷害、拖尾特效、依 max_range 真實距離判定存活
+└── resources/
+    └── spells/
+        ├── Fireball.tres               # AoETargetingDelivery
+        ├── ForceWave.tres              # SelfDelivery
+        └── LightningBolt.tres          # ProjectileDelivery + PiercingImpact + 牆壁反彈 + fixed_speed
 ```
+
+法術系統架構（`Spell`/`SpellDelivery`/`SpellEffect`/`ProjectileImpact`）的設計決策記錄在 `SPELL_SYSTEM.md`，不重複寫在這裡。`TargetDummy.gd` 目前已經有一個跳躍+範圍落地傷害的簡易 AI（`AiState` 狀態機），不是本節原本（PoC 初版）排除的「真正怪物 AI」範圍，§2.3 的排除清單只反映 PoC 最初階段，後續擴充已超出去，詳見 `ROADMAP.md`。
 
 ### 5.1 Input Map（`project.godot`）
 | Action | 綁定 |
@@ -176,7 +233,7 @@ mygame/
 | `cast_spell` | 滑鼠左鍵 |
 | `instant_cast` | 滑鼠右鍵 |
 
-目前**沒有**設定 Ctrl（法術圓盤）與空白鍵（Dash），因為 PoC 範圍排除。
+Ctrl（法術切換輪盤）跟空白鍵（Dash）都**沒有**走 Input Map，直接在 `Player.gd` 用 `Input.is_key_pressed(KEY_CTRL)`／`event.physical_keycode == KEY_SPACE` 判斷（見 §4.4、§4.6），避免手刻 `project.godot` 的 `InputEventKey` 設錯 keycode 數值卻不會噴錯的風險。
 
 ### 5.2 執行環境
 - Godot 4.6.2.stable，渲染後端 `gl_compatibility`（相容性模式，PoC 階段優先求穩定不求效能）。

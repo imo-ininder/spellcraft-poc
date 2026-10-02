@@ -1,0 +1,33 @@
+[gd_resource type="Resource" script_class="Spell" load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/spells/Spell.gd" id="1_spell"]
+[ext_resource type="Script" path="res://scripts/spells/ProjectileDelivery.gd" id="2_delivery"]
+[ext_resource type="PackedScene" path="res://scenes/spells/SpellProjectile.tscn" id="3_projectile"]
+[ext_resource type="Script" path="res://scripts/spells/PiercingImpact.gd" id="4_piercing"]
+[ext_resource type="Script" path="res://scripts/spells/DamageEffect.gd" id="5_damage"]
+[ext_resource type="Script" path="res://scripts/spells/SpellEffect.gd" id="6_spelleffect"]
+
+[sub_resource type="Resource" id="Resource_piercing"]
+script = ExtResource("4_piercing")
+
+[sub_resource type="Resource" id="Resource_delivery"]
+script = ExtResource("2_delivery")
+projectile_scene = ExtResource("3_projectile")
+impact = SubResource("Resource_piercing")
+fixed_speed = 700.0
+bounces_off_walls = true
+
+[sub_resource type="Resource" id="Resource_damage"]
+script = ExtResource("5_damage")
+min_amount = 6.0
+max_amount = 10.0
+damage_mult = 0.0
+
+[resource]
+script = ExtResource("1_spell")
+id = "lightningbolt"
+display_name = "雷電箭"
+cast_time = 1.5
+max_range = 1800.0
+delivery = SubResource("Resource_delivery")
+base_effects = Array[ExtResource("6_spelleffect")]([SubResource("Resource_damage")])

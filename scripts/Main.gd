@@ -6,6 +6,7 @@ extends Node2D
 @onready var combo_label: Label = $UI/ComboLabel
 @onready var cd_bar: ProgressBar = $UI/CDBar
 @onready var cd_label: Label = $UI/CDLabel
+@onready var spell_wheel: SpellWheel = $UI/SpellWheel
 
 func _ready() -> void:
 	player.cast_started.connect(_on_cast_started)
@@ -14,9 +15,21 @@ func _ready() -> void:
 	player.rune_added.connect(_on_rune_added)
 	player.combo_failed.connect(_on_combo_failed)
 	player.rightclick_cd_updated.connect(_on_cd_updated)
+	player.spell_wheel_opened.connect(_on_wheel_opened)
+	player.spell_wheel_hover_changed.connect(_on_wheel_hover_changed)
+	player.spell_wheel_closed.connect(_on_wheel_closed)
 	cast_bar.visible = false
 	combo_label.text = ""
 	cd_label.text = "右鍵CD: 就緒"
+
+func _on_wheel_opened(center: Vector2, current_index: int) -> void:
+	spell_wheel.open(player.equipped_spells, center, current_index)
+
+func _on_wheel_hover_changed(index: int) -> void:
+	spell_wheel.update_hover(index)
+
+func _on_wheel_closed(_selected_index: int) -> void:
+	spell_wheel.close()
 
 func _on_cast_started() -> void:
 	cast_bar.visible = true

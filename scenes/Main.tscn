@@ -1,9 +1,11 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://scripts/Main.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/entities/Player.tscn" id="2"]
 [ext_resource type="PackedScene" path="res://scenes/entities/TargetDummy.tscn" id="3"]
 [ext_resource type="Script" path="res://scripts/core/Arena.gd" id="4"]
+[ext_resource type="Script" path="res://scripts/ui/SpellWheel.gd" id="5"]
+[ext_resource type="Script" path="res://scripts/ui/AoETargetingReticle.gd" id="6"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_top"]
 size = Vector2(1272, 36)
@@ -46,6 +48,9 @@ position = Vector2(300, 400)
 [node name="TargetDummy" parent="." instance=ExtResource("3")]
 position = Vector2(800, 400)
 
+[node name="AoETargetingReticle" type="Node2D" parent="."]
+script = ExtResource("6")
+
 [node name="UI" type="CanvasLayer" parent="."]
 
 [node name="CastBar" type="ProgressBar" parent="UI"]
@@ -80,3 +85,9 @@ offset_left = 20.0
 offset_top = 48.0
 offset_right = 220.0
 offset_bottom = 70.0
+
+[node name="SpellWheel" type="Control" parent="UI"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+script = ExtResource("5")

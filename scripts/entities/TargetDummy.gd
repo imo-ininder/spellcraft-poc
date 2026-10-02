@@ -9,6 +9,7 @@ const TELEGRAPH_DURATION := 0.6
 const RISING_DURATION := 0.7
 const JUMP_PEAK_HEIGHT := 90.0
 const RECOVER_DURATION := 0.4
+const KNOCKBACK_FRICTION := 900.0
 
 enum AiState { IDLE, TELEGRAPH, RISING, SLAM, RECOVER }
 
@@ -16,6 +17,7 @@ var hp := MAX_HP
 var flash_timer := 0.0
 var squash := 1.0
 var idle_bob := 0.0
+var knockback_velocity := Vector2.ZERO
 
 var ai_state: AiState = AiState.IDLE
 var ai_timer := IDLE_DURATION
@@ -24,6 +26,13 @@ var jump_origin := Vector2.ZERO
 var jump_target := Vector2.ZERO
 
 signal hp_changed(ratio)
+
+func _ready() -> void:
+	add_to_group("enemies")
+
+## 擊退疊加在 AI 狀態機當幀已經設定的位置上，不改 AI 邏輯本身，見 _process()
+func apply_knockback(force: Vector2) -> void:
+	knockback_velocity += force
 
 func take_damage(amount: float) -> void:
 	hp = max(0.0, hp - amount)
@@ -57,6 +66,13 @@ func _process(delta: float) -> void:
 		flash_timer -= delta
 	idle_bob += delta * 2.0
 	_process_ai(delta)
+	if knockback_velocity.length() > 1.0:
+		global_position += knockback_velocity * delta
+		global_position.x = clamp(global_position.x, 0.0, Arena.ARENA_WIDTH)
+		global_position.y = clamp(global_position.y, 0.0, Arena.ARENA_HEIGHT)
+		knockback_velocity = knockback_velocity.move_toward(Vector2.ZERO, KNOCKBACK_FRICTION * delta)
+	else:
+		knockback_velocity = Vector2.ZERO
 	queue_redraw()
 
 func _process_ai(delta: float) -> void:

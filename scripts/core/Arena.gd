@@ -1,3 +1,4 @@
+class_name Arena
 extends Node2D
 
 const TILE_SIZE := 56.0
