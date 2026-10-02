@@ -29,5 +29,6 @@ id = "lightningbolt"
 display_name = "雷電箭"
 cast_time = 1.5
 max_range = 1800.0
+slot_cost = 1
 delivery = SubResource("Resource_delivery")
 base_effects = Array[ExtResource("6_spelleffect")]([SubResource("Resource_damage")])

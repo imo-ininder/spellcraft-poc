@@ -2,6 +2,7 @@ extends CharacterBody2D
 
 func _ready() -> void:
 	add_to_group("player")
+	equipped_spells = GameState.get_equipped_or_default()
 	equipped_spell = equipped_spells[0]
 
 const SPEED := 260.0
@@ -21,12 +22,9 @@ var dash_direction := Vector2.ZERO
 ## 上一次 WASD 有輸入時的方向，Dash 站著不動時用這個當衝刺方向
 var last_move_direction := Vector2.DOWN
 
-## 目前裝備的 3 把法術，固定順序對應輪盤三格。還沒有大廳裝備系統（DEMO_GOALS.md §2.5），先用這份清單代替。
-var equipped_spells: Array[Spell] = [
-	preload("res://resources/spells/Fireball.tres"),
-	preload("res://resources/spells/ForceWave.tres"),
-	preload("res://resources/spells/LightningBolt.tres"),
-]
+## 目前裝備的法術，順序對應輪盤各格，由 GameState.equipped_spells（大廳配置結果）在 _ready() 填入。
+## 數量不固定（DEMO_GOALS.md §2.5 的格數預算允許任意把數塞滿 6 格），輪盤的角度公式本來就支援任意數量。
+var equipped_spells: Array[Spell] = []
 var equipped_spell: Spell
 
 ## 法術切換輪盤狀態（DEMO_GOALS.md §3）：按住 Ctrl 彈出，子彈時間，滑鼠角度決定選中哪一格，
@@ -40,8 +38,8 @@ signal spell_wheel_opened(center, current_index)
 signal spell_wheel_hover_changed(index)
 signal spell_wheel_closed(selected_index)
 
-# 符紋組合表：按鍵序列 -> 效果。序列越長/越難打，效果越強。
-const RUNE_COMBOS := {
+# 超魔專長組合表：按鍵序列 -> 效果。序列越長/越難打，效果越強。角色天生就會全部，Demo 階段固定不解鎖。
+const ARCANE_FEATS := {
 	"UU": {"label": "+傷害", "color": Color(1, 0.3, 0.3), "damage_mult": 0.5},
 	"UDU": {"label": "+強力傷害", "color": Color(1, 0.1, 0.6), "damage_mult": 1.2},
 	"UULR": {"label": "+終極爆發", "color": Color(1, 0.8, 0.1), "damage_mult": 1.8},
@@ -59,12 +57,12 @@ const DIR_KEYS := {
 var is_casting := false
 var cast_timer := 0.0
 ## 吟唱速度調整值的總和，0.0＝正常，+1.0＝+100%。實際吟唱時長＝base_cast_time / (1 + cast_speed_bonus)，
-## 不是直接線性扣減——`RR`/`LL` 符紋在吟唱途中即時調整，不是套在發射數值上
+## 不是直接線性扣減——`RR`/`LL` 超魔專長在吟唱途中即時調整，不是套在發射數值上
 var cast_speed_bonus := 0.0
 var combo_buffer := ""
 var pending_combo := ""
 var combo_last_input_time := 0.0
-var accumulated_runes: Array = []
+var accumulated_feats: Array = []
 var rightclick_cd_timer := 0.0
 var fail_flash_timer := 0.0
 var success_flash_timer := 0.0
@@ -75,7 +73,7 @@ var hazard_flash_timer := 0.0
 signal cast_started
 signal cast_progress(ratio)
 signal cast_ended
-signal rune_added(rune_data)
+signal feat_added(feat_data)
 signal combo_failed
 signal rightclick_cd_updated(ratio)
 
@@ -245,9 +243,9 @@ func _handle_combo_key(key: String) -> void:
 	combo_last_input_time = now
 	var attempt := combo_buffer + key
 
-	var is_exact := RUNE_COMBOS.has(attempt)
+	var is_exact := ARCANE_FEATS.has(attempt)
 	var has_longer_prefix := false
-	for combo in RUNE_COMBOS.keys():
+	for combo in ARCANE_FEATS.keys():
 		if combo.length() > attempt.length() and combo.begins_with(attempt):
 			has_longer_prefix = true
 			break
@@ -269,16 +267,16 @@ func _handle_combo_key(key: String) -> void:
 	_fail_combo()
 
 func _commit_combo(key_string: String) -> void:
-	var rune = RUNE_COMBOS[key_string]
-	accumulated_runes.append(rune)
-	rune_added.emit(rune)
+	var feat = ARCANE_FEATS[key_string]
+	accumulated_feats.append(feat)
+	feat_added.emit(feat)
 	success_flash_timer = 0.2
 	combo_buffer = ""
 	pending_combo = ""
-	if rune.has("cast_speed_bonus"):
-		# clamp 在 -0.9，避免疊加太多減速符紋讓 (1+cast_speed_bonus) 變成 0 或負數、讀條卡死或倒退
-		cast_speed_bonus = max(cast_speed_bonus + float(rune["cast_speed_bonus"]), -0.9)
-	MagicFX.spawn_burst(get_tree().current_scene, global_position + Vector2(0, -24), rune.get("color", Color.WHITE), 14, 160.0)
+	if feat.has("cast_speed_bonus"):
+		# clamp 在 -0.9，避免疊加太多減速專長讓 (1+cast_speed_bonus) 變成 0 或負數、讀條卡死或倒退
+		cast_speed_bonus = max(cast_speed_bonus + float(feat["cast_speed_bonus"]), -0.9)
+	MagicFX.spawn_burst(get_tree().current_scene, global_position + Vector2(0, -24), feat.get("color", Color.WHITE), 14, 160.0)
 
 func _fail_combo() -> void:
 	combo_buffer = ""
@@ -293,7 +291,7 @@ func _start_casting() -> void:
 	cast_speed_bonus = 0.0
 	combo_buffer = ""
 	pending_combo = ""
-	accumulated_runes.clear()
+	accumulated_feats.clear()
 	cast_started.emit()
 
 func _cancel_casting() -> void:
@@ -302,13 +300,13 @@ func _cancel_casting() -> void:
 
 func _finish_casting() -> void:
 	is_casting = false
-	_fire_spell(accumulated_runes)
+	_fire_spell(accumulated_feats)
 	cast_ended.emit()
 
-func _rune_to_effects(rune: Dictionary) -> Array:
+func _feat_to_effects(feat: Dictionary) -> Array:
 	var effects: Array = []
-	if rune.has("damage_mult"):
-		effects.append(DamageEffect.new(0.0, 0.0, float(rune["damage_mult"])))
+	if feat.has("damage_mult"):
+		effects.append(DamageEffect.new(0.0, 0.0, float(feat["damage_mult"])))
 	return effects
 
 func _base_stats() -> Dictionary:
@@ -317,10 +315,10 @@ func _base_stats() -> Dictionary:
 		effect.apply(stats)
 	return stats
 
-func _fire_spell(runes: Array) -> void:
+func _fire_spell(feats: Array) -> void:
 	var stats := _base_stats()
-	for r in runes:
-		for effect in _rune_to_effects(r):
+	for f in feats:
+		for effect in _feat_to_effects(f):
 			effect.apply(stats)
 	var dir := (get_global_mouse_position() - global_position).normalized()
 	equipped_spell.delivery.fire(self, dir, stats, equipped_spell.max_range)

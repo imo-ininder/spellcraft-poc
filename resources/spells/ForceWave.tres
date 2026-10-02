@@ -22,5 +22,6 @@ id = "forcewave"
 display_name = "力場波"
 cast_time = 1.2
 max_range = 140.0
+slot_cost = 2
 delivery = SubResource("Resource_delivery")
 base_effects = Array[ExtResource("4_spelleffect")]([SubResource("Resource_damage")])

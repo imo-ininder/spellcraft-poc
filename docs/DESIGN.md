@@ -178,6 +178,23 @@
 
 目前**只實作了「未裝備位移法術」這個分支**——`DEMO_GOALS.md` §2.4 的另一半（已裝備位移法術時，空白鍵改觸發該法術走 `AoETargetingDelivery` 選點流程）要等真的有位移類法術時才有東西可以接，`equipped_spells` 目前 3 把全是攻擊類，這段分流邏輯還沒有存在的理由。按下空白鍵只在 `_input()` 設一個 `dash_requested` flag，實際觸發延到 `_physics_process()` 做，跟其他移動/物理操作在同一個時機點，吟唱中或輪盤開啟時會被忽略（這兩個狀態本來就鎖定移動），衝刺進行中（`is_dashing`）也不會同時處理一般移動。不走 `Spell`/`SpellDelivery` 架構、不佔用法術欄位、沒有冷卻（如果實測覺得太容易連續衝刺可以再加）。
 
+### 4.7 符紋重新命名為「超魔專長」，大廳法術格系統落地
+
+使用者決定把「符紋」整個改名成「超魔專長」——純粹是名稱調整，判定邏輯（前綴匹配＋pending 機制、`COMBO_MAX_GAP` 時間窗口）完全沒變，`Player.gd` 的 `RUNE_COMBOS`→`ARCANE_FEATS`、`accumulated_runes`→`accumulated_feats`、`rune_added`→`feat_added` 訊號、`_rune_to_effects`→`_feat_to_effects`，`Main.tscn` 的 `RuneContainer`→`FeatContainer`，UI 文字（吟唱提示、成功/失敗訊息）都改成「超魔專長」措辭。§3 整節原本的「符紋」敘述在概念上仍然成立，之後有空再整體替換用詞，目前先確保程式碼跟新文件用語一致，不強制回頭改 §3 的歷史敘述文字。
+
+**超魔專長的性質也在這次澄清確定**：角色天生就會全部（`ARCANE_FEATS` 清單），不綁定特定法術，吟唱任何法術時都能打出同一組按鍵序列——**真正要配置的不是專長，是法術**。Demo 階段超魔專長固定不解鎖，正式版才會有「學習／強化」機制（§6.2 待決策清單新增這一項）。
+
+**法術格系統**（對應 `DEMO_GOALS.md` §2.5、§7.2）：角色固定 6 格法術欄位（`GameState.TOTAL_SLOTS`），每把法術有 `Spell.slot_cost`（火球術3／力場波2／雷電箭1，剛好佔滿6格），玩家在大廳場景（`scenes/Lobby.tscn`）勾選要帶上戰場的法術，超過格數預算時直接拒絕這次勾選並反紅閃一下（不是「允許選超但出發按鈕變灰」那種中間態）。
+
+新增一個 autoload 單例 `scripts/state/GameState.gd`，負責：
+- `CATALOG`：法術總表（目前 3 把路徑），新增法術只需要改這裡，大廳/輪盤都會自動反映。
+- `equipped_spells`：大廳勾選結果，`Lobby.gd` 按下「出發」時寫入，`Player.gd:_ready()` 讀取。
+- `get_equipped_or_default()`：`equipped_spells` 為空時 fallback 成全部法術——這是為了保留「直接在 editor 開 `Main.tscn` 測試，不經過大廳」的工作流程，不會因為跳過大廳就壞掉或要求額外設定。
+
+`Player.gd:equipped_spells` 不再是寫死 `preload()` 三把，改成 `_ready()` 時呼叫 `GameState.get_equipped_or_default()`，數量不再固定是 3——法術輪盤（`SpellWheel.gd`／`Player.gd:_update_wheel_hover()`）的角度公式原本就是用 `TAU / float(n)` 通用寫法，沒有寫死 3 這個數字，所以直接支援任意把數（已用 headless 腳本針對 N=6 重新跑過一次格與格之間的角度反推驗證，跟 N=3 時用的是完全相同的公式）。
+
+`project.godot` 的 `run/main_scene` 改成指向 `Lobby.tscn`，`Main.tscn` 變成「戰鬥場景」，透過 `Lobby.gd:_on_depart_pressed()` 的 `get_tree().change_scene_to_file()` 切換過去。
+
 ---
 
 ## 5. 專案結構
@@ -186,28 +203,32 @@
 
 ```
 spellcraft-poc/
-├── project.godot                       # Godot 4.6 專案設定，含 input map（WASD、左右鍵）
+├── project.godot                       # Godot 4.6 專案設定，含 input map、[autoload] GameState、啟動場景＝Lobby.tscn
 ├── scenes/
-│   ├── Main.tscn                       # 主場景：背景、Player、TargetDummy、選點介面、UI（吟唱條/符紋顯示/CD條/輪盤）
+│   ├── Lobby.tscn                      # 大廳：法術格配置畫面（§4.7），啟動場景
+│   ├── Main.tscn                       # 戰鬥場景：背景、Player、TargetDummy、選點介面、UI（吟唱條/專長顯示/CD條/輪盤）
 │   ├── entities/
 │   │   ├── Player.tscn                 # CharacterBody2D + CollisionShape2D + Camera2D
 │   │   └── TargetDummy.tscn
 │   └── spells/
 │       └── SpellProjectile.tscn        # 投射物類法術共用場景（目前只有雷電箭在用）
 ├── scripts/
-│   ├── Main.gd                         # UI 綁定：吟唱進度條、符紋圖示列、CD 條、輪盤轉接
+│   ├── Main.gd                         # UI 綁定：吟唱進度條、專長圖示列、CD 條、輪盤轉接
+│   ├── Lobby.gd                        # 大廳邏輯：格數預算檢查、勾選/反紅、寫入 GameState、切換到 Main.tscn（§4.7）
+│   ├── state/
+│   │   └── GameState.gd                # Autoload 單例：法術總表、TOTAL_SLOTS、equipped_spells 跨場景傳遞（§4.7）
 │   ├── core/
 │   │   └── Arena.gd                    # 場地地板/牆體程式繪圖（class_name Arena，ARENA_WIDTH/HEIGHT 全域常數）
 │   ├── entities/
-│   │   ├── Player.gd                   # 移動、吟唱狀態機、符紋判定、發射邏輯、輪盤選取、角色繪製（核心檔案）
+│   │   ├── Player.gd                   # 移動、吟唱狀態機、超魔專長判定、發射邏輯、輪盤選取、角色繪製（核心檔案）
 │   │   └── TargetDummy.gd              # 假目標血量、受擊回饋、怪物 AI 狀態機、擊退位移、繪製
 │   ├── fx/
 │   │   └── MagicFX.gd                  # 共用特效工具（class_name，static 方法：burst/trail/explosion_ring）
 │   ├── ui/
-│   │   ├── SpellWheel.gd               # 法術切換輪盤的畫面呈現（螢幕座標，不做選取判定，見 §4.4）
+│   │   ├── SpellWheel.gd               # 法術切換輪盤的畫面呈現（螢幕座標，不做選取判定，支援任意把數，見 §4.4、§4.7）
 │   │   └── AoETargetingReticle.gd      # 火球術選點介面（世界座標，暫停時仍運作，見 §4.5）
 │   └── spells/
-│       ├── Spell.gd                    # 法術定義（Resource）：id/cast_time/max_range/delivery/base_effects
+│       ├── Spell.gd                    # 法術定義（Resource）：id/cast_time/max_range/slot_cost/delivery/base_effects
 │       ├── SpellDelivery.gd            # 發射方式基底（Resource），fire() 有 instant 參數供右鍵瞬發用
 │       ├── ProjectileDelivery.gd       # 直線投射物（travel_time 反推速度或 fixed_speed 固定值、可選牆壁反彈）
 │       ├── SelfDelivery.gd             # 以施法者為中心的範圍 delivery（力場波在用）
@@ -219,9 +240,9 @@ spellcraft-poc/
 │       └── SpellProjectile.gd          # 投射物飛行、碰撞傷害、拖尾特效、依 max_range 真實距離判定存活
 └── resources/
     └── spells/
-        ├── Fireball.tres               # AoETargetingDelivery
-        ├── ForceWave.tres              # SelfDelivery
-        └── LightningBolt.tres          # ProjectileDelivery + PiercingImpact + 牆壁反彈 + fixed_speed
+        ├── Fireball.tres               # AoETargetingDelivery，slot_cost=3
+        ├── ForceWave.tres              # SelfDelivery，slot_cost=2
+        └── LightningBolt.tres          # ProjectileDelivery + PiercingImpact + 牆壁反彈 + fixed_speed，slot_cost=1
 ```
 
 法術系統架構（`Spell`/`SpellDelivery`/`SpellEffect`/`ProjectileImpact`）的設計決策記錄在 `SPELL_SYSTEM.md`，不重複寫在這裡。`TargetDummy.gd` 目前已經有一個跳躍+範圍落地傷害的簡易 AI（`AiState` 狀態機），不是本節原本（PoC 初版）排除的「真正怪物 AI」範圍，§2.3 的排除清單只反映 PoC 最初階段，後續擴充已超出去，詳見 `ROADMAP.md`。
@@ -255,13 +276,15 @@ Ctrl（法術切換輪盤）跟空白鍵（Dash）都**沒有**走 Input Map，�
 3. **吟唱被怪物打斷時怎麼處理**——目前完全沒有怪物會主動攻擊，吟唱不會被中斷，正式版需要設計「被打斷時符紋全部作廢還是部分保留」。
 4. **範圍型法術的俯視選圈與遊戲暫停**——完全未實作，需要另外規劃輸入與鏡頭切換。
 5. **Mana／施放頻率限制**——原始構想中標註「視情況加入」，PoC 階段尚未決定要不要做。
-6. **符紋組合表的平衡性與數量上限**——目前 6 組純屬示範，正式設計需要考慮「法術欄位」與「符紋解放」的裝備系統如何與這套輸入機制掛鉤。
+6. **超魔專長組合表的平衡性與數量上限**——目前 5 組純屬示範，正式設計需要考慮「法術格系統」（§4.7）與「專長學習/強化」如何與這套輸入機制掛鉤（§4.7 已把「配置的是法術，不是專長」這個分工定下來，但專長本身還沒有解鎖/強化機制，Demo 階段固定全開）。
 7. **假目標打到 0 血直接重置滿血**——沒有死亡/掉落邏輯，正式戰鬥循環（打王→掉素材）完全未開始實作。
+8. **大廳重新進入時的狀態保留**——`Lobby.gd` 目前用 `GameState.equipped_spells.duplicate()` 讓玩家重新進大廳時沿用上次配置，但如果玩家中途沒按「出發」就直接關閉遊戲，`GameState` 本身不會持久化到磁碟，下次啟動一樣是空清單走 fallback，這點是刻意的（Demo 階段不需要存檔），但如果之後要加存檔功能，`GameState` 會是最直接的掛鉤點。
 
 ---
 
 ## 7. 給後續接手者的建議閱讀順序
-1. 先讀本文件第 3 節（核心機制），這是整個專案的靈魂，務必先理解 pending 機制與失敗判定的設計意圖，再動手改動任何時間常數。
-2. 打開 Godot editor 跑一次 `Main.tscn`，實際體驗現在的手感，建立直覺後再看程式碼。
-3. 讀 `Player.gd` 全文（約 230 行），這是唯一的複雜邏輯檔案，其餘檔案都相對單純。
-4. 若要擴充符紋表，務必注意共享前綴的交互行為（3.2、3.4），建議先用現有的 `UU`/`UULR` pair 跑過一輪手測，再加新組合。
+1. 先讀本文件第 3 節（核心機制），這是整個專案的靈魂，務必先理解 pending 機制與失敗判定的設計意圖，再動手改動任何時間常數。（注意：§3 的敘述仍沿用「符紋」這個舊名詞，§4.7 已說明這只是用詞歷史，概念與現在的「超魔專長」完全一致，不是兩套系統。）
+2. 打開 Godot editor 跑一次，流程是 `Lobby.tscn`（大廳配置法術）→ 按「出發」→ `Main.tscn`（戰鬥），實際體驗現在的手感，建立直覺後再看程式碼。
+3. 讀 `Player.gd` 全文（約 380 行），這是唯一的複雜邏輯檔案，其餘檔案都相對單純。
+4. 若要擴充超魔專長表，務必注意共享前綴的交互行為（3.2、3.4），建議先用現有的 `UU`/`UULR` pair 跑過一輪手測，再加新組合。
+5. 若要新增法術，記得在 `GameState.gd:CATALOG` 加上資源路徑，否則大廳跟輪盤都不會出現這把法術——這是目前唯一的法術總表來源，別漏掉。

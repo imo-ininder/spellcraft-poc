@@ -21,5 +21,6 @@ id = "fireball"
 display_name = "火球術"
 cast_time = 2.0
 max_range = 500.0
+slot_cost = 3
 delivery = SubResource("Resource_delivery")
 base_effects = Array[ExtResource("4_spelleffect")]([SubResource("Resource_damage")])

@@ -60,7 +60,7 @@ offset_right = 880.0
 offset_bottom = 680.0
 show_percentage = false
 
-[node name="RuneContainer" type="HBoxContainer" parent="UI"]
+[node name="FeatContainer" type="HBoxContainer" parent="UI"]
 offset_left = 400.0
 offset_top = 685.0
 offset_right = 880.0
