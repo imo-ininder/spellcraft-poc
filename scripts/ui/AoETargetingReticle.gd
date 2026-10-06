@@ -50,11 +50,24 @@ func _unhandled_input(event: InputEvent) -> void:
 		queue_redraw()
 		finished.emit(null)
 
+## 3/4視角風格：圓形選取範圍要畫成貼地的橢圓，不是正圓——跟角色腳下陰影/爆炸特效(MagicFX.
+## GROUND_SQUASH)同一套視覺語言。這裡不是在 CanvasItem 自己的座標系內畫一個置中的圖案（不能直接套
+## node.scale 壓扁），而是用 caster.global_position/target_point 這種世界座標當圓心直接畫——
+## 所以手動建橢圓多邊形而不是呼叫 draw_arc/draw_circle。
+const GROUND_SQUASH := 0.5
+
+func _draw_ground_ellipse(center: Vector2, radius: float, color: Color, width: float) -> void:
+	var points := PackedVector2Array()
+	for i in range(65):
+		var a: float = TAU * float(i) / 64.0
+		points.append(center + Vector2(cos(a) * radius, sin(a) * radius * GROUND_SQUASH))
+	draw_polyline(points, color, width, true)
+
 func _draw() -> void:
 	if not active:
 		return
 	var ring_color := Color(0.4, 1.0, 0.5, 0.9) if in_range else Color(0.6, 0.6, 0.6, 0.6)
-	draw_arc(caster.global_position, max_range, 0, TAU, 64, Color(1, 1, 1, 0.25), 2.0, true)
+	_draw_ground_ellipse(caster.global_position, max_range, Color(1, 1, 1, 0.25), 2.0)
 	draw_line(caster.global_position, target_point, Color(1, 1, 1, 0.3), 1.5)
-	draw_arc(target_point, preview_radius, 0, TAU, 32, ring_color, 3.0, true)
+	_draw_ground_ellipse(target_point, preview_radius, ring_color, 3.0)
 	draw_circle(target_point, 4.0, ring_color)

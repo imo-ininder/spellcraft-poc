@@ -3,8 +3,6 @@ extends Control
 
 const RADIUS := 110.0
 const DEAD_ZONE := 12.0
-## 每格的底色，跟各法術本身在遊戲裡的特效色保持一致（火球=橘、力場波=紫、雷電箭=電光藍）
-const SLOT_COLORS := [Color(1, 0.5, 0.15), Color(0.75, 0.55, 1.0), Color(0.3, 0.9, 1.0)]
 
 var spells: Array = []
 var hover_index := -1
@@ -40,7 +38,7 @@ func _draw() -> void:
 		var mid := -PI / 2.0 + slice * i
 		var start_angle := mid - slice / 2.0
 		var end_angle := mid + slice / 2.0
-		var color: Color = SLOT_COLORS[i % SLOT_COLORS.size()]
+		var color: Color = GameState.color_for(spells[i])
 		var is_hovered := i == hover_index
 		_draw_pie_slice(start_angle, end_angle, Color(color, 0.85 if is_hovered else 0.45))
 		var label_pos := center + Vector2(cos(mid), sin(mid)) * (RADIUS * 0.62)

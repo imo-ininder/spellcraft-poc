@@ -27,6 +27,7 @@ damage_mult = 0.0
 script = ExtResource("1_spell")
 id = "lightningbolt"
 display_name = "雷電箭"
+description = "射出1道高速電箭，命中敵人造成6~10點傷害並直接穿透、持續飛行，撞到場地邊界會反彈，直到飛行總距離耗盡才消失。"
 cast_time = 1.5
 max_range = 1800.0
 slot_cost = 1

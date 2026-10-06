@@ -13,7 +13,7 @@ extends SpellDelivery
 ## 碰到場地邊界會不會反彈，不是物理碰撞（不影響既有法術的牆壁穿越手感），見 SpellProjectile.gd
 @export var bounces_off_walls: bool = false
 
-func fire(caster: Node2D, direction: Vector2, stats: Dictionary, max_range: float) -> void:
+func fire(caster: Node2D, direction: Vector2, stats: Dictionary, max_range: float, _effects: Array = []) -> void:
 	var projectile := projectile_scene.instantiate()
 	caster.get_tree().current_scene.add_child(projectile)
 	projectile.global_position = caster.global_position

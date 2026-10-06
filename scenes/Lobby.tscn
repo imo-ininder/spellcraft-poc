@@ -1,6 +1,17 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scripts/Lobby.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/ui/CharacterPortrait.gd" id="2"]
+[ext_resource type="Script" path="res://scripts/ui/SlotGrid.gd" id="3"]
+[ext_resource type="Script" path="res://scripts/ui/LoadoutWheelPreview.gd" id="4"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel_opaque"]
+bg_color = Color(0.1, 0.08, 0.14, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.3, 0.26, 0.38, 1)
 
 [node name="Lobby" type="Node2D"]
 script = ExtResource("1")
@@ -12,31 +23,244 @@ color = Color(0.14, 0.1, 0.2, 1)
 
 [node name="UI" type="CanvasLayer" parent="."]
 
-[node name="TitleLabel" type="Label" parent="UI"]
-offset_left = 40.0
-offset_top = 30.0
-offset_right = 500.0
-offset_bottom = 70.0
-theme_override_font_sizes/font_size = 28
+[node name="LeftPanel" type="Control" parent="UI"]
+anchor_right = 0.5
+anchor_bottom = 1.0
+
+[node name="CharacterPortrait" type="Control" parent="UI/LeftPanel"]
+anchor_right = 1.0
+anchor_bottom = 0.6
+script = ExtResource("2")
+
+[node name="StatePanel" type="VBoxContainer" parent="UI/LeftPanel"]
+anchor_top = 0.6
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 30.0
+offset_top = 20.0
+offset_right = -20.0
+theme_override_constants/separation = 10
+
+[node name="NameLabel" type="Label" parent="UI/LeftPanel/StatePanel"]
+theme_override_font_sizes/font_size = 22
+text = "法師"
+
+[node name="EquippedLabel" type="Label" parent="UI/LeftPanel/StatePanel"]
+theme_override_font_sizes/font_size = 16
+autowrap_mode = 2
+text = "尚未裝備法術"
+
+[node name="RightPanel" type="Control" parent="UI"]
+anchor_left = 0.5
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="TabMargin" type="MarginContainer" parent="UI/RightPanel"]
+anchor_right = 1.0
+anchor_bottom = 0.86
+theme_override_constants/margin_left = 30
+theme_override_constants/margin_top = 40
+theme_override_constants/margin_right = 30
+theme_override_constants/margin_bottom = 10
+
+[node name="TabList" type="VBoxContainer" parent="UI/RightPanel/TabMargin"]
+theme_override_constants/separation = 10
+
+[node name="Tab0" type="Button" parent="UI/RightPanel/TabMargin/TabList"]
+custom_minimum_size = Vector2(0, 55)
+theme_override_font_sizes/font_size = 16
 text = "法術配置"
 
-[node name="SlotLabel" type="Label" parent="UI"]
-offset_left = 40.0
-offset_top = 80.0
-offset_right = 400.0
-offset_bottom = 110.0
-theme_override_font_sizes/font_size = 20
+[node name="Tab1" type="Button" parent="UI/RightPanel/TabMargin/TabList"]
+custom_minimum_size = Vector2(0, 55)
+theme_override_font_sizes/font_size = 16
+text = "超魔專長"
+
+[node name="Tab2" type="Button" parent="UI/RightPanel/TabMargin/TabList"]
+custom_minimum_size = Vector2(0, 55)
+focus_mode = 0
+disabled = true
+modulate = Color(0.4, 0.4, 0.4, 1)
+theme_override_font_sizes/font_size = 16
+text = "敬請期待"
+
+[node name="Tab3" type="Button" parent="UI/RightPanel/TabMargin/TabList"]
+custom_minimum_size = Vector2(0, 55)
+focus_mode = 0
+disabled = true
+modulate = Color(0.4, 0.4, 0.4, 1)
+theme_override_font_sizes/font_size = 16
+text = "敬請期待"
+
+[node name="Tab4" type="Button" parent="UI/RightPanel/TabMargin/TabList"]
+custom_minimum_size = Vector2(0, 55)
+focus_mode = 0
+disabled = true
+modulate = Color(0.4, 0.4, 0.4, 1)
+theme_override_font_sizes/font_size = 16
+text = "敬請期待"
+
+[node name="DepartButton" type="Button" parent="UI/RightPanel"]
+anchor_top = 0.88
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 30.0
+offset_right = -30.0
+theme_override_font_sizes/font_size = 16
+text = "出發"
+
+[node name="DimOverlay" type="ColorRect" parent="UI"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0, 0, 0, 0.78)
+mouse_filter = 0
+visible = false
+
+[node name="SpellConfigPanel" type="Control" parent="UI"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+visible = false
+
+[node name="GridWindow" type="Panel" parent="UI/SpellConfigPanel"]
+anchor_left = 0.04
+anchor_top = 0.08
+anchor_right = 0.62
+anchor_bottom = 0.92
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel_opaque")
+
+[node name="GridMargin" type="MarginContainer" parent="UI/SpellConfigPanel/GridWindow"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 20
+
+[node name="GridArea" type="VBoxContainer" parent="UI/SpellConfigPanel/GridWindow/GridMargin"]
+theme_override_constants/separation = 16
+
+[node name="GridTitleLabel" type="Label" parent="UI/SpellConfigPanel/GridWindow/GridMargin/GridArea"]
+theme_override_font_sizes/font_size = 22
+text = "法術格"
+
+[node name="SlotGrid" type="Control" parent="UI/SpellConfigPanel/GridWindow/GridMargin/GridArea"]
+custom_minimum_size = Vector2(0, 70)
+script = ExtResource("3")
+
+[node name="SlotLabel" type="Label" parent="UI/SpellConfigPanel/GridWindow/GridMargin/GridArea"]
+theme_override_font_sizes/font_size = 16
 text = "已用 0 / 6 格"
 
-[node name="SpellList" type="VBoxContainer" parent="UI"]
-offset_left = 40.0
-offset_top = 130.0
-offset_right = 500.0
-offset_bottom = 500.0
+[node name="WheelHintLabel" type="Label" parent="UI/SpellConfigPanel/GridWindow/GridMargin/GridArea"]
+theme_override_font_sizes/font_size = 16
+text = "按住 Ctrl 拖曳調整輪盤順序"
 
-[node name="DepartButton" type="Button" parent="UI"]
-offset_left = 40.0
-offset_top = 620.0
-offset_right = 220.0
-offset_bottom = 670.0
-text = "出發"
+[node name="LoadoutWheelPreview" type="Control" parent="UI/SpellConfigPanel/GridWindow/GridMargin/GridArea"]
+visible = false
+custom_minimum_size = Vector2(0, 220)
+script = ExtResource("4")
+
+[node name="SpellDetailScroll" type="ScrollContainer" parent="UI/SpellConfigPanel/GridWindow/GridMargin/GridArea"]
+custom_minimum_size = Vector2(0, 220)
+horizontal_scroll_mode = 0
+
+[node name="SpellDetailLabel" type="Label" parent="UI/SpellConfigPanel/GridWindow/GridMargin/GridArea/SpellDetailScroll"]
+custom_minimum_size = Vector2(0, 0)
+size_flags_horizontal = 3
+autowrap_mode = 2
+theme_override_font_sizes/font_size = 16
+
+[node name="SpellWindow" type="Panel" parent="UI/SpellConfigPanel"]
+anchor_left = 0.66
+anchor_top = 0.08
+anchor_right = 0.96
+anchor_bottom = 0.92
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel_opaque")
+
+[node name="SpellMargin" type="MarginContainer" parent="UI/SpellConfigPanel/SpellWindow"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 20
+
+[node name="SpellArea" type="VBoxContainer" parent="UI/SpellConfigPanel/SpellWindow/SpellMargin"]
+theme_override_constants/separation = 16
+
+[node name="SpellTitleLabel" type="Label" parent="UI/SpellConfigPanel/SpellWindow/SpellMargin/SpellArea"]
+theme_override_font_sizes/font_size = 22
+text = "法術配置（Esc 關閉）"
+
+[node name="SpellScroll" type="ScrollContainer" parent="UI/SpellConfigPanel/SpellWindow/SpellMargin/SpellArea"]
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="SpellList" type="VBoxContainer" parent="UI/SpellConfigPanel/SpellWindow/SpellMargin/SpellArea/SpellScroll"]
+size_flags_horizontal = 3
+
+[node name="FeatInfoPanel" type="Control" parent="UI"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+visible = false
+
+[node name="FeatDetailWindow" type="Panel" parent="UI/FeatInfoPanel"]
+anchor_left = 0.04
+anchor_top = 0.08
+anchor_right = 0.62
+anchor_bottom = 0.92
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel_opaque")
+
+[node name="FeatDetailMargin" type="MarginContainer" parent="UI/FeatInfoPanel/FeatDetailWindow"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 20
+
+[node name="FeatDetailArea" type="VBoxContainer" parent="UI/FeatInfoPanel/FeatDetailWindow/FeatDetailMargin"]
+theme_override_constants/separation = 16
+
+[node name="FeatDetailTitleLabel" type="Label" parent="UI/FeatInfoPanel/FeatDetailWindow/FeatDetailMargin/FeatDetailArea"]
+theme_override_font_sizes/font_size = 22
+text = "按法與效果"
+
+[node name="FeatDetailScroll" type="ScrollContainer" parent="UI/FeatInfoPanel/FeatDetailWindow/FeatDetailMargin/FeatDetailArea"]
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="FeatDetailLabel" type="Label" parent="UI/FeatInfoPanel/FeatDetailWindow/FeatDetailMargin/FeatDetailArea/FeatDetailScroll"]
+custom_minimum_size = Vector2(0, 0)
+size_flags_horizontal = 3
+autowrap_mode = 2
+theme_override_font_sizes/font_size = 16
+
+[node name="FeatListWindow" type="Panel" parent="UI/FeatInfoPanel"]
+anchor_left = 0.66
+anchor_top = 0.08
+anchor_right = 0.96
+anchor_bottom = 0.92
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel_opaque")
+
+[node name="FeatListMargin" type="MarginContainer" parent="UI/FeatInfoPanel/FeatListWindow"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 20
+
+[node name="FeatListArea" type="VBoxContainer" parent="UI/FeatInfoPanel/FeatListWindow/FeatListMargin"]
+theme_override_constants/separation = 16
+
+[node name="FeatListTitleLabel" type="Label" parent="UI/FeatInfoPanel/FeatListWindow/FeatListMargin/FeatListArea"]
+theme_override_font_sizes/font_size = 22
+text = "超魔專長（Esc 關閉）"
+
+[node name="FeatListScroll" type="ScrollContainer" parent="UI/FeatInfoPanel/FeatListWindow/FeatListMargin/FeatListArea"]
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="FeatListList" type="VBoxContainer" parent="UI/FeatInfoPanel/FeatListWindow/FeatListMargin/FeatListArea/FeatListScroll"]
+size_flags_horizontal = 3

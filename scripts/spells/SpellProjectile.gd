@@ -46,19 +46,21 @@ func _physics_process(delta: float) -> void:
 
 ## 用場地邊界的位置判斷做反彈，不是物理碰撞——SpellProjectile 的 collision_mask 刻意不偵測牆壁
 ## （見 docs/SPELL_SYSTEM.md），這樣才不會影響 Fireball 等其他法術既有的飛越牆壁手感。
+## 圓形場地：超出半徑時夾回圓周上，velocity 用該點的圓周法線（圓心→該點方向）反射，
+## 跟矩形時代「水平/垂直分別判斷、各自翻轉」的做法不同，但效果一樣是「撞到邊界彈回來」。
+## 場地改成內圈玩家場地+外圈boss環道之後，這裡要用 PLAYER_ZONE_RADIUS（玩家自己的場地邊界），
+## 不是 ARENA_RADIUS（那是外圈boss環道的外緣）——雷電箭是玩家法術，玩家本人被牆物理擋在
+## PLAYER_ZONE_RADIUS 以內，投射物的反彈邊界理當跟著玩家能站的範圍走，不是場地最外圈那麼遠
+## （用 ARENA_RADIUS 的話，投射物會直接飛穿過縫隙、飛進 boss 環道，在那邊彈來彈去，不合理）。
 func _bounce_off_arena_bounds() -> void:
-	var bounced := false
-	if position.x < 0.0 or position.x > Arena.ARENA_WIDTH:
-		position.x = clamp(position.x, 0.0, Arena.ARENA_WIDTH)
-		velocity.x = -velocity.x
-		bounced = true
-	if position.y < 0.0 or position.y > Arena.ARENA_HEIGHT:
-		position.y = clamp(position.y, 0.0, Arena.ARENA_HEIGHT)
-		velocity.y = -velocity.y
-		bounced = true
-	if bounced:
-		rotation = velocity.angle()
-		MagicFX.spawn_burst(get_parent(), global_position, orb_color, 8, 120.0)
+	var offset: Vector2 = global_position - Arena.ARENA_CENTER
+	if offset.length() <= Arena.PLAYER_ZONE_RADIUS:
+		return
+	var normal := offset.normalized()
+	global_position = Arena.ARENA_CENTER + normal * Arena.PLAYER_ZONE_RADIUS
+	velocity = velocity.bounce(normal)
+	rotation = velocity.angle()
+	MagicFX.spawn_burst(get_parent(), global_position, orb_color, 8, 120.0)
 
 func _on_body_entered(body: Node) -> void:
 	if _resolved:

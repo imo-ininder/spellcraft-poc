@@ -1,9 +1,14 @@
 class_name MagicFX
 
+## 3/4視角風格：特效壓扁成橢圓（跟角色腳下陰影、Arena 磚塊同一套「貼地」視覺語言），不是正圓
+## 往四面八方炸開——這樣爆炸/特效看起來才像發生在地面上，不是懸浮在半空的正圓形。
+const GROUND_SQUASH := 0.5
+
 static func spawn_burst(parent: Node, pos: Vector2, color: Color, amount: int = 16, speed: float = 220.0) -> void:
 	var p := CPUParticles2D.new()
 	parent.add_child(p)
 	p.global_position = pos
+	p.scale = Vector2(1.0, GROUND_SQUASH)
 	p.emitting = true
 	p.one_shot = true
 	p.amount = amount
@@ -26,6 +31,7 @@ static func spawn_explosion_ring(parent: Node, pos: Vector2, radius: float, colo
 	var ring := Node2D.new()
 	parent.add_child(ring)
 	ring.global_position = pos
+	ring.scale = Vector2(1.0, GROUND_SQUASH)
 	ring.z_index = 10
 	ring.set_meta("t", 0.0)
 	ring.draw.connect(func():

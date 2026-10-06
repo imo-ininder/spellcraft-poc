@@ -20,6 +20,7 @@ damage_mult = 0.0
 script = ExtResource("1_spell")
 id = "forcewave"
 display_name = "力場波"
+description = "以自身為中心釋放衝擊波，對周圍140px範圍內的所有敵人造成12~18點傷害，並將其往外擊退。"
 cast_time = 1.2
 max_range = 140.0
 slot_cost = 2

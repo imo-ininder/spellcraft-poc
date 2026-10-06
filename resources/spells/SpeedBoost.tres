@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="Spell" load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/spells/Spell.gd" id="1_spell"]
+[ext_resource type="Script" path="res://scripts/spells/SelfBuffDelivery.gd" id="2_delivery"]
+[ext_resource type="Script" path="res://scripts/spells/SpeedBuffEffect.gd" id="3_speed"]
+[ext_resource type="Script" path="res://scripts/spells/SpellEffect.gd" id="4_spelleffect"]
+
+[sub_resource type="Resource" id="Resource_delivery"]
+script = ExtResource("2_delivery")
+
+[sub_resource type="Resource" id="Resource_speed"]
+script = ExtResource("3_speed")
+mult = 0.1
+duration = 10.0
+
+[resource]
+script = ExtResource("1_spell")
+id = "speed_boost"
+display_name = "速度提升"
+description = "施放後提升自身移動速度10%，持續10秒。"
+cast_time = 2.0
+max_range = 0.0
+slot_cost = 1
+delivery = SubResource("Resource_delivery")
+base_effects = Array[ExtResource("4_spelleffect")]([SubResource("Resource_speed")])

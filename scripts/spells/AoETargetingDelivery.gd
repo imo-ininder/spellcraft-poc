@@ -6,7 +6,7 @@ extends SpellDelivery
 ## 瞬發一樣要暫停等玩家選位置，只是少了符紋強化、傷害用固定倍率（見 Player.gd:_fire_instant_spell）。
 @export var radius: float = 90.0
 
-func fire(caster: Node2D, _direction: Vector2, stats: Dictionary, max_range: float) -> void:
+func fire(caster: Node2D, _direction: Vector2, stats: Dictionary, max_range: float, _effects: Array = []) -> void:
 	var reticle: AoETargetingReticle = caster.get_tree().current_scene.get_node("AoETargetingReticle")
 	caster.get_tree().paused = true
 	reticle.start(caster, max_range, radius)

@@ -1,290 +1,242 @@
 # Spellcraft PoC 設計文件
 
-> 法師版「魔物獵人」，純 PVE。核心賣點：吟唱法術時，在吟唱時間內用方向鍵打出符紋指令序列，即時決定本次法術的強化效果。「打快一點可以多塞幾個符紋，但風險是打錯或打斷；打慢一點求穩，但強化數量/種類受限」——這組取捨是整個遊戲最需要先驗證好玩與否的核心機制。
+> 法師版「魔物獵人」，純 PVE。核心機制：吟唱法術時，在吟唱時間內用方向鍵打出超魔專長指令序列，即時決定本次法術的強化效果。打快可以多塞幾個專長但有打斷/打錯風險，打慢求穩但強化數量受限。
 
 ---
 
-## 1. 遊戲總體願景（原始構想）
+## 1. 核心機制：超魔專長序列輸入系統
 
-### 1.1 一句話描述
-操控法師施放法術攻擊/防禦怪物，吟唱法術時可透過按鍵指令加入符紋強化該次法術效果（概念近似 DND 的超魔專長 / PoE 的輔助寶石），完成「打王 → 掉裝備/符紋 → 強化角色 → 打更強的王」的 ARPG+魔物獵人式 PVE 循環。
+### 1.1 吟唱流程
+1. 玩家按住滑鼠左鍵（`cast_spell`）→ 進入吟唱狀態，開始倒數裝備中法術的 `cast_time`，角色鎖定移動。
+2. 吟唱期間 WASD 不再移動角色，改為輸入方向鍵：上(U)/下(D)/左(L)/右(R)。
+3. 每個按鍵接到緩衝字串 `combo_buffer` 後面，比對 `GameState.ARCANE_FEATS` 組合表。
+4. 命中完整組合 → 觸發對應效果，疊加進 `accumulated_feats`。
+5. 法術只在吟唱時間自然倒數結束時發動（`_finish_casting`），用目前累積的所有專長效果計算最終數值後發射。
+6. 吟唱時間結束前鬆開左鍵＝取消整個吟唱（`_cancel_casting`）：不會發射法術，已累積專長全部作廢。
 
-### 1.2 操作設計（完整版本，PoC 僅實作其中核心子集）
-| 輸入 | 功能 |
-|---|---|
-| 滑鼠左鍵（按住） | 吟唱裝備的法術，吟唱完成時發射 |
-| 滑鼠右鍵 | 瞬間施放裝備法術（有 CD，不經過吟唱/符紋強化） |
-| WASD | 平時：角色移動／吟唱中：切換為符紋指令輸入 |
-| Ctrl（按住） | 彈出法術切換圓盤（參考 Witcher 3 風格），滑鼠移到對應法術上即裝備 |
-| 空白鍵 | Dash／移動類法術 |
-
-### 1.3 法術與裝備框架（PoC 未實作，記錄供後續擴充）
-- 法術分階級，低階法術佔用法術欄位少、高階佔用多，角色升級增加欄位總量——藉此平衡「能同時裝備幾個法術」。
-- 射線/投射物型法術：吟唱完直接朝游標方向發射。
-- 範圍型法術：吟唱完後切換為俯視視角進行範圍選圈，選圈期間遊戲暫停，選定後發動。
-- 裝備提供被動效果：+吟唱速度 / -吟唱速度 / +傷害 / +治癒量 / +移動速度 / -CD 等。
-- 職業系統：不同職業可學會的法術不同。
-- Mana 系統：視測試結果決定是否加入，用於限制施放頻率。
-
-### 1.4 核心 Build 範例（設計意圖，非程式限制）
-- **快唱法師**：加強吟唱速度，只用最簡單的符紋組合（風險低），換取機動性與輸出節奏流暢度。
-- **慢唱法師**：降低吟唱速度換取更長的吟唱時間，能在吟唱視窗內打出更長／更難的符紋序列，讓法術效果產生質變（而非單純數值提升）。
-
-### 1.5 市場定位備忘
-目前沒有找到直接做過「吟唱中即時打方向序列決定強化、且序列長度對應風險與效果強度」這個具體機制的現成遊戲。相近但不同的參考案例：
-- **Noita**：法術組件也是「組合決定效果」，但是戰前配置，不是吟唱當下的即時輸入，缺少臨場決策張力。
-- **格鬥遊戲連段輸入 / Crypt of the NecroDancer**：節奏輸入決定行動的機制類似，但不是用在「法術強化」這個情境。
-- **黑暗靈魂系蓄力重擊、龍之信條法術可被打斷**：驗證了「吟唱中有風險」這個概念，但沒有主動輸入指令這一層。
-
-**視覺/UI 調性**PoC明確參考 *Magicka*：Q 版、鮮豔、誇張特效的奇幻風格。**注意：只借用美術調性，不借用 Magicka 的「元素鍵即時無風險組合法術種類」玩法——本專案的符紋輸入是有風險、决定強化程度，不是決定法術種類。**
-
----
-
-## 2. PoC 範圍界定
-
-### 2.1 本次 PoC 的目標
-只驗證一件事：**「吟唱中打符紋序列」這個核心互動好不好玩**——節奏感、風險/回報取捨、輸入回饋是否到位。不做裝備、素材、職業、Boss AI、法術切換圓盤、範圍選圈、Mana 系統。
-
-### 2.2 PoC 包含的最小場景
-- 一個可移動角色（WASD 移動＋滑鼠轉向）。
-- 一個固定假目標（怪物替身），會顯示受擊、傷害數字、血條。
-- 左鍵按住＝進入吟唱狀態，WASD 轉為符紋指令輸入；吟唱時間自然倒數結束才發射法術，**提前鬆開左鍵＝取消整個吟唱**，不會發射，已累積符紋全部作廢。
-- 右鍵＝瞬發法術（固定傷害，走 CD，不經過符紋強化）。
-- 符紋效果直接套用在傷害/穿透/彈速數值上，不做真正的技能樹或裝備系統。
-- Magicka 調性的簡易程式繪圖＋粒子特效（無外部美術資源）。
-
-### 2.3 明確排除（刻意不做，避免 PoC 失焦）
-- 範圍型法術與俯視選圈介面
-- 法術切換圓盤（Ctrl 選盤）
-- Dash／空白鍵技能
-- 裝備、掉落、強化、職業、Mana
-- 真正的怪物 AI（移動/攻擊/反擊）
-
----
-
-## 3. 核心機制：符紋序列輸入系統
-
-這是整個 PoC 的靈魂，以下記錄所有已拍板的設計決策與原因，**修改這部分任何數值前請先理解原因**。
-
-### 3.1 基本流程
-1. 玩家按住滑鼠左鍵 → 進入吟唱狀態，開始倒數裝備中法術的 `cast_time`（目前唯一的 `Fireball.tres` 是 2.0 秒，見 `SPELL_SYSTEM.md`），角色鎖定移動。
-2. 吟唱期間，WASD 不再移動角色，而是輸入方向鍵：上(U)/下(D)/左(L)/右(R)。
-3. 玩家按下的鍵會不斷接到一個緩衝字串 `combo_buffer` 後面，去比對符紋組合表 `RUNE_COMBOS`。
-4. 命中完整組合 → 觸發對應強化效果，疊加進 `accumulated_runes`。
-5. **法術只會在吟唱時間自然倒數結束時發動**，用目前已累積的所有符紋效果計算最終數值，發射投射物法術（`_finish_casting`）。
-6. **如果玩家在吟唱時間結束前鬆開左鍵，視為取消吟唱**（`_cancel_casting`）：不會發射法術，已累積的符紋全部作廢，與「符紋輸入失敗」是不同層級的失敗——這是「放棄整個法術」，不是「這次符紋沒湊成」。
-
-### 3.2 符紋比對邏輯：前綴匹配 + Pending 機制
-這套邏輯是為了解決兩個需求：**(a)** 允許短符紋與長符紋共享前綴（例如 `UU` 和 `UULR`），**(b)** 讓玩家在輸入過程中自然地「選擇要不要賭更強效果」，而不是系統搶先判定。
-
-對每個新按下的鍵，組成 `attempt = combo_buffer + key` 後分四種情況處理（對應 `Player.gd:_handle_combo_key`）：
+### 1.2 序列比對邏輯：前綴匹配 + Pending 機制
+支援短序列與長序列共享前綴（例如 `UU` 和 `UULR`），讓玩家能在輸入過程中自然決定要不要賭更強效果。每次新按鍵組成 `attempt = combo_buffer + key` 後分四種情況處理（`Player.gd:_handle_combo_key`）：
 
 | 情況 | 判定 | 行為 |
 |---|---|---|
-| `attempt` 是完整符紋，且**不是**任何更長符紋的前綴 | 單純完整命中 | 立即 `_commit_combo`：套用效果、噴特效、清空緩衝 |
-| `attempt` 是完整符紋，**同時也是**更長符紋的前綴（如 `UU`，同時是 `UULR` 前綴） | 曖昧狀態 | 存成 `pending_combo`，**不立即觸發**，繼續等待下一鍵，看玩家要不要延伸 |
-| `attempt` 不是完整符紋，但是某個更長符紋的前綴（如 `U`，是 `UU`/`UDU`/`UULR` 的前綴） | 半成品 | 更新 `combo_buffer = attempt`，清空 `pending_combo`，繼續等待 |
-| `attempt` 既非完整符紋，也不是任何前綴 | 無效延伸 | `_fail_combo()`：清空緩衝，灰色失敗特效 |
+| `attempt` 是完整序列，且不是任何更長序列的前綴 | 單純完整命中 | 立即 `_commit_combo`：套用效果、噴特效、清空緩衝 |
+| `attempt` 是完整序列，同時也是更長序列的前綴 | 曖昧狀態 | 存成 `pending_combo`，不立即觸發，繼續等待下一鍵 |
+| `attempt` 不是完整序列，但是某個更長序列的前綴 | 半成品 | 更新 `combo_buffer = attempt`，清空 `pending_combo`，繼續等待 |
+| `attempt` 既非完整序列，也不是任何前綴 | 無效延伸 | `_fail_combo()`：清空緩衝，灰色失敗特效 |
 
-另外每個 frame 在 `_process_casting` 中檢查「距離上次按鍵過了多久」：
-- 若手上有 `pending_combo`（即前述曖昧狀態）且等待超過 `COMBO_MAX_GAP` → 視為玩家「選擇停在這裡」，**確認觸發** pending 符紋（不算失敗）。
-- 若手上沒有 `pending_combo`，只是個半成品前綴，等待超過 `COMBO_MAX_GAP` → 判定失敗（因為這個半成品沒有對應效果可兌現）。
+每個 frame 在 `_process_casting` 中檢查「距離上次按鍵過了多久」：
+- 有 `pending_combo` 且等待超過 `COMBO_MAX_GAP` → 確認觸發 pending 序列（不算失敗）。
+- 沒有 `pending_combo`、只是半成品前綴，等待超過 `COMBO_MAX_GAP` → 判定失敗。
 
-**為什麼要這樣設計**：如果玩家目標是打 `UULR`（强力符紋），打完 `U U` 的瞬間系統不會搶先判定「湊齊 UU 觸發 +傷害」然後清空緩衝——否則玩家接下來打 `L R` 會被當成全新序列，變成兩個低階符紋而不是一個高階符紋。用 pending 機制讓玩家靠**節奏**自然做出選擇：繼續快速按下一鍵＝不滿足於目前效果、想賭更強；刻意停頓＝接受目前效果，確認拿到。
+### 1.3 時間窗口
+唯一的時間常數：`COMBO_MAX_GAP = 0.15`（`Player.gd`）。按鍵可以盡量快，只要在 0.15 秒內接上下一鍵就能持續延伸序列；超過 0.15 秒沒接鍵，才會判定「停在這裡確認拿到」或「失敗」。沒有下限限制——系統不懲罰玩家手速快，只懲罰拖太久不接下一鍵。
 
-### 3.3 時間窗口數值與演進過程（重要：記錄歷史決策，避免後人走回頭路）
-| 版本 | MIN_GAP | MAX_GAP | 問題/原因 |
-|---|---|---|---|
-| v1（初版） | 無 | 0.6s | 太寬鬆，玩家可以用蠻力速度硬打，不需要節奏感，等於沒有限制 |
-| v2 | 0.1s | 0.2s | 加入下限懲罰「打太快」，意圖逼出穩定節奏；但實測發現 pending 符紋與下一個新序列起手鍵容易互相干擾，造成「失敗後更容易連續失敗」的挫折感（見 3.4） |
-| **v3（現行）** | **已移除** | **0.15s** | 拿掉下限：遊戲不應該懲罰玩家手速快，只懲罰「拖太久不接下一鍵」。只保留上限判斷，窗口縮短到 0.15s 讓節奏更緊湊 |
+### 1.4 失敗判定
+只有以下兩種情況算失敗（`_fail_combo`）：
+1. 按下的鍵使緩衝區變成一個既非完整序列、也不是任何序列前綴的字串。
+2. 緩衝區是一個尚未完整的前綴（沒有 pending），且超過 0.15 秒沒有輸入下一鍵。
 
-現行唯一的時間常數：`COMBO_MAX_GAP = 0.15`（`Player.gd:5`）。玩家按鍵可以盡量快，只要在 0.15 秒內接上下一鍵就能持續延伸序列；超過 0.15 秒沒接鍵，才會判定「停在這裡確認拿到」或「失敗」。
+反之，緩衝區已經是完整序列（進入 pending）時超時，代表「確認拿到」，不算失敗。
 
-### 3.4 已排查的 Bug／易混淆行為記錄
-**現象**：玩家回報「符紋打失敗後，後面很容易連續失敗」。
+### 1.5 目前的超魔專長表
+定義於 `GameState.gd:ARCANE_FEATS`：
 
-**根因**：v2 版本中，如果玩家打完一個「同時是完整符紋又是前綴」的組合（如 `UU`），系統進入 pending 等待狀態，不會馬上觸發。如果玩家緊接著想開始「下一次全新序列」而按下的鍵剛好不構成任何合法延伸（例如 `UU` 後面接 `U`，變成 `UUU`，不合法），就會被判定失敗，而原本 pending 的 `UU` 也從未被 commit，等於平白浪費一次本該成功的符紋。
+| 按鍵序列 | 效果 | 數值 |
+|---|---|---|
+| `UU`（上上） | +傷害 | damage_mult +0.5 |
+| `UDU`（上下上） | +強力傷害 | damage_mult +1.2 |
+| `UULR`（上上左右） | +終極爆發 | damage_mult +1.8（與 `UU` 共享前綴） |
+| `RR`（右右） | +吟唱速度 | cast_speed_bonus +0.5 |
+| `LL`（左左） | -吟唱速度 | cast_speed_bonus -0.5 |
 
-**結論**：這不是手速問題，是輸入窗口設計沒有照顧到「中途改變心意，不延伸、改開新序列」的情境。目前透過 v3 的「拿掉下限、縮短上限至 0.15s」緩解了實際感受（讓玩家更容易在 pending 狀態下即時決定延伸或放手），但**底層的 pending／新序列交界處理邏輯本質上沒有改變**，如果未來要增加更多共享前綴的符紋，務必重新測試這個邊界情況。
+角色永久天生會全部，不綁定特定法術，吟唱任何法術時都能打出同一組序列；有沒有實際作用取決於目前裝備的法術吃不吃得到該效果類型。Demo 階段固定全部解鎖，不做學習/解鎖/強化介面。
 
-### 3.5 失敗判定的完整列表（給後續除錯/調整用）
-只有以下兩種情況算「失敗」（`_fail_combo`）：
-1. 按下的鍵使緩衝區變成一個既非完整符紋、也不是任何符紋前綴的字串（按錯鍵）。
-2. 緩衝區是一個「尚未完整」的前綴（沒有 pending），且超過 0.15 秒沒有輸入下一鍵（拖太久、手上沒有可兌現的符紋）。
+傷害類專長（`damage_mult`）疊加方式：對「目前已累加的傷害值」疊加百分比，不是對最終值相乘，疊加順序就是打出專長的順序。
 
-反之，如果緩衝區已經是一個完整符紋（進入 pending），超時代表「確認拿到」，**不算失敗**。
+### 1.6 吟唱速度調整公式
+`RR`/`LL` 不經過發射數值（`stats`），而是在 `_commit_combo` 當下直接修改 `Player.gd:cast_speed_bonus`，立即影響讀條消耗速度。`cast_speed_bonus` 是調整值總和（0.0＝正常），實際吟唱時長：
 
-### 3.6 目前符紋組合表（純示範數值，供後續設計師調整）
-定義於 `Player.gd:RUNE_COMBOS`：
+```
+實際吟唱時長 = base_cast_time / (1 + cast_speed_bonus)
+```
 
-| 按鍵序列 | 效果 | 數值 | 鍵數（難度） |
-|---|---|---|---|
-| `UU`（上上） | +傷害 | damage_mult +0.5 | 2 |
-| `UDU`（上下上） | +強力傷害 | damage_mult +1.2 | 3 |
-| `UULR`（上上左右） | +終極爆發 | damage_mult +1.8 | 4，且與 `UU` 共享前綴（刻意設計用來測試 pending 機制） |
-| `RR`（右右，`>>`） | +吟唱速度 | cast_speed_bonus +0.5 | 2 |
-| `LL`（左左，`<<`） | -吟唱速度 | cast_speed_bonus -0.5 | 2 |
-
-> 原本還有 `DD`（+穿透）、`LR`/`RL`（+彈速），`UULR` 原本也帶 `pierce +2`。穿透因為遊戲定調「純 PVE、一次只打一隻王」完全沒有使用情境已移除（見 `SPELL_SYSTEM.md` §8.7）；彈速則是因為法術改成「固定時間內飛到最大距離」的模型，速度變成由 `max_range`／`travel_time` 反推出來的結果，不再是獨立可疊加的數值，所以整個「彈速」維度也拿掉了（見 `SPELL_SYSTEM.md` §8.8）。
-
-`RR`/`LL` 是第一個不影響最終發射數值、而是**即時改變讀條本身消耗速度**的符紋。`Player.gd:cast_speed_bonus` 是「速度調整值的總和」（0.0＝正常，單位跟百分比對應，+1.0＝+100%），不是直接拿來當倍率乘的那個數——**實際吟唱時長 ＝ base_cast_time / (1 + cast_speed_bonus)**，`cast_speed_bonus = 1.0`（+100%）時時長正好變成一半，這是刻意比照 ARPG 常見的「增減速％用倒數公式疊加」設計（而不是直接線性砍時長，線性砍法在疊加多個減速效果時容易讓時長變成 0 或負數）。實作上因為要逐 frame 消耗 `cast_timer`（剩餘吟唱時間），所以反過來用消耗速率 `cast_timer -= delta * (1 + cast_speed_bonus)`——這跟「時長變成 1/(1+cast_speed_bonus)」是同一件事的兩種寫法（速率跟時長互為倒數），`cast_speed_bonus` 在 `_commit_combo` 當下立即疊加生效，不是等吟唱結束才套用。`cast_speed_bonus` 下限 clamp 在 -0.9（而不是對最終倍率設一個隨意的下限），避免疊太多 `LL` 讓 `(1+cast_speed_bonus)` 變成 0 或負數、讀條卡死或倒退。這也是「快唱／慢唱」兩種 Build 構想（見 §1.4）第一次有實際機制支撐，差別是 §1.4 原本設想的是裝備被動的長期選擇，`RR`/`LL` 則是單次吟唱內的即時決策——兩者不衝突，之後裝備系統上線時可以共存（被動影響基礎 `cast_time`，符紋影響單次吟唱內的即時 `cast_speed_bonus`）。
-
-最終傷害計算（`Player.gd:_fire_spell`）：基底傷害現在來自 `resources/spells/Fireball.tres` 裡 `DamageEffect.min_amount`/`max_amount`（8~12，每次施放隨機抽一個值，法術系統架構 v1 已實作，見 `SPELL_SYSTEM.md` §8），逐個符紋疊加 `damage * damage_mult`（非最終值相乘，是對目前傷害值累加百分比，符紋加成本身不是隨機值）。這組公式僅為 PoC 示範，未做平衡。
+`cast_speed_bonus = 1.0`（+100%）時長變成一半。逐 frame 消耗寫成 `cast_timer -= delta * (1 + cast_speed_bonus)`（消耗速率跟時長互為倒數）。`cast_speed_bonus` 下限 clamp 在 `-0.9`，避免疊加多個減速效果讓 `(1+cast_speed_bonus)` 碰到 0 或負數。
 
 ---
 
-## 4. 其他已實作系統
+## 2. 法術格系統與大廳
 
-### 4.1 右鍵瞬發法術
-- 固定傷害＝裝備中法術的基礎傷害（`base_effects` 算出的 `damage`，不套用符紋）乘上 `Player.gd:INSTANT_CAST_DAMAGE_MULT`（0.8），不經過吟唱/符紋強化，純粹測試「有 CD 的即時手段」存在時的節奏感。
-- CD 固定 `RIGHTCLICK_CD = 3.0` 秒，UI 顯示冷卻進度條與剩餘秒數。
-- 定位：補刀/保命用的簡單技能，玩家在 Boss 戰立回時可用，不需要承擔符紋輸入風險。
-- **瞬發跳過的只是吟唱/符紋累積那段，不是 delivery 本身的運作方式**——如果裝備中法術是「鎖定選點」類型（例如火球），右鍵瞬發一樣會暫停遊戲等你選位置，只是不用先吟唱、傷害用固定倍率。第一版做錯把這個也跳過了，已經修正，見 `SPELL_SYSTEM.md` §8.14。
+### 2.1 法術格
+角色固定 6 格法術欄位（`GameState.TOTAL_SLOTS`），每把法術依 `Spell.slot_cost` 佔用不同格數。配置的單位是法術，不是超魔專長——超魔專長天生全部解鎖、不需配置。玩家在大廳場景（`scenes/Lobby.tscn`）勾選要帶上戰場的法術，超過格數預算時直接拒絕這次勾選並反紅閃一下。
 
-### 4.2 法術與受擊
-目前有三把法術（`resources/spells/*.tres`），按住 Ctrl 用輪盤切換裝備（見 §4.4，取代了舊的數字鍵暫時方案）：
+### 2.2 GameState（autoload 單例，`scripts/state/GameState.gd`）
+- `TOTAL_SLOTS = 6`。
+- `CATALOG`：法術 `.tres` 路徑總表，新增法術只需要改這裡，大廳跟輪盤都會自動反映。
+- `SPELL_COLORS`：每把法術的代表色，按 `CATALOG` 順序對應，輪盤跟大廳格子視覺化共用。
+- `ARCANE_FEATS`：超魔專長組合表，`Player.gd` 跟大廳的超魔專長一覽分頁都讀這份表。
+- `equipped_spells`：大廳勾選結果，`Lobby.gd` 按「出發」時寫入，`Player.gd:_ready()` 讀取。
+- `default_loadout()`：`equipped_spells` 為空時的 fallback，依 `CATALOG` 順序貪婪塞滿 6 格、塞不下的法術跳過——讓不經大廳直接開 `Main.tscn` 測試的工作流程不受影響。
 
-1. **火球術（`Fireball.tres`）**：`AoETargetingDelivery`。鎖定選點的範圍法術，不是投射物——吟唱結束後（或右鍵瞬發，兩者都一樣）暫停遊戲、顯示跟隨滑鼠的指示圈（受 `max_range`=500 限制，超出範圍鎖在邊界），確認後對選定點 90px 範圍內所有 `enemies` 群組成員造成傷害（見 `SPELL_SYSTEM.md` §8.13、§8.14）。
-2. **力場波（`ForceWave.tres`）**：`SelfDelivery`，以施法者自己為中心，瞬間對半徑 140px 內所有敵人造成傷害並擊退（`knockback_force=500`）。沒有飛行階段，吟唱結束當下直接判定，不經過投射物。
-3. **雷電箭（`LightningBolt.tres`）**：`ProjectileDelivery` + `PiercingImpact`（無限穿透，不是符紋疊加的，是法術天生行為）+ `bounces_off_walls=true`（碰到場地邊界會反彈，用位置判斷而非物理碰撞，不影響其他法術）+ `fixed_speed=700`（固定飛行速度，不是用 `max_range`/`travel_time` 反推——`max_range`=1800 是給反彈用的總路徑長度上限，不是「終點距離」，兩者語意不同，見 `SPELL_SYSTEM.md` §8.12）。命中敵人不會消失，只有累計飛行距離耗盡才結束。
+`project.godot` 的 `run/main_scene` 是 `Lobby.tscn`；`Main.tscn` 是戰鬥場景，透過 `Lobby.gd:_on_depart_pressed()` 的 `change_scene_to_file()` 切換過去。
 
-`SpellProjectile.gd`（投射物類法術共用，目前只有雷電箭在用）：直線飛行，命中東西或飛行距離耗盡時，把「接下來要發生什麼事」委派給自己的 `impact`（`ProjectileImpact` 變體：`SingleHitImpact`/`ExplosiveImpact`/`PiercingImpact`，見 `SPELL_SYSTEM.md` §8.6、§8.10），自己不內建爆炸/穿透邏輯。飛行速度預設是固定要在 `delivery.travel_time` 秒內飛完 `max_range` 反推出來的（見 `SPELL_SYSTEM.md` §8.8），但 `fixed_speed>0` 時會直接用固定值蓋過這套反推邏輯（§8.12）。`ExplosiveImpact`/`SingleHitImpact` 目前都還沒有法術在用，架構上保留著，不是沒用該刪。
+### 2.3 大廳 UI
+左半邊是角色形象（`CharacterPortrait.gd`）＋目前裝備法術文字列表；右半邊是分頁清單（法術配置／超魔專長／三個「敬請期待」佔位）。選分頁會疊一層 `DimOverlay`（78%不透明黑）+ 對應的浮動面板，兩個面板互斥（開一個會先關閉另一個，避免鍵盤 Tab 焦點繞過視覺遮擋同時開啟兩個面板）。
 
-`TargetDummy.gd`：固定假目標，有 HP 條、受擊閃色、Q 版彈跳變形動畫（squash & stretch）、飄浮傷害數字、跳躍+範圍落地攻擊的簡易 AI（`AiState`），已加入 `enemies` 群組供範圍型法術查詢命中對象。新增 `apply_knockback()`：獨立於 AI 狀態機的位移層，`ForceWave` 擊退時用摩擦力衰減速度、clamp 在場地範圍內，不會影響 AI 自己的跳躍動畫邏輯。打到 0 血目前直接重置滿血，方便連續測試，**非正式死亡/擊殺邏輯**。
+**法術配置分頁**（`SpellConfigPanel`）：左側 `GridWindow` 顯示法術格視覺化（`SlotGrid.gd`，已用/總格數）；下半部平時顯示目前選中法術的詳細說明（名稱、佔用格數、施放時間、`Spell.description` 手寫說明文字），按住 Ctrl 時切換成法術輪盤排序預覽（`LoadoutWheelPreview.gd`，拖拽交換法術在戰鬥輪盤上的順序，角度基準與戰鬥輪盤一致：正上方為第0格、`TAU/n` 等分、順時針）。右側 `SpellWindow` 是可捲動的法術清單（`ScrollContainer`），滑鼠 hover 或鍵盤 focus 到哪一行就更新左側說明。
 
-### 4.3 視覺風格（Magicka 調性落地）
-全部用 Godot `_draw()` 程式繪圖 + `CPUParticles2D` 動態生成，無外部美術資源：
-- **角色**：Q 版長袍法師（三角形長袍、尖帽子會隨時間輕微搖晃、法杖頭發光球在吟唱時脈動），吟唱中有脈動光環，符紋成功/失敗時角色主體變色並噴對應顏色粒子爆發。
-- **投射物**：預設是發光球體拖著粒子軌跡飄浮光點環繞旋轉，顏色依 `impact` 變體而變（爆炸=橘、預設=黃）；`PiercingImpact`（雷電箭）改用專用畫法——沿飛行方向拖出一條會抖動的鋸齒長條（電光藍，頭尖尾散），不是圓點，`SpellProjectile.gd:_draw_bolt()`。
-- **假目標**：紫色水晶怪物造型，受擊閃紅並有彈性擠壓動畫。
-- **場景**：深紫色背景，營造奇幻氛圍。
-- 共用特效邏輯集中在 `MagicFX.gd`（`class_name MagicFX`），提供 `spawn_burst()`（爆發粒子）、`make_sparkle_trail()`（拖尾粒子）、`spawn_explosion_ring()`（範圍特效用的擴張淡出圈）三個 static 工具方法，供角色/投射物/法術共用。
+**超魔專長分頁**（`FeatInfoPanel`）：唯讀，不能配置。右側清單同樣是 master-detail 關係，focus/hover 到哪一條就在左側顯示按法與效果說明。
 
-### 4.4 法術切換輪盤（`DEMO_GOALS.md` §3、§7.4）
-- 按住 Ctrl（`Input.is_key_pressed(KEY_CTRL)`，沒有另外設 Input Map action）彈出輪盤，`Engine.time_scale` 降到 0.25（子彈時間，不是暫停，怪物跟場上一切持續運作只是變慢）；放開 Ctrl **或**點擊左鍵都會確認並收起輪盤，兩種收起方式都生效。
-- 選取判定：以 Ctrl 剛按下那一刻的滑鼠位置為輪盤中心（不是螢幕中心、也不是角色位置），之後滑鼠相對中心的角度決定選中哪一格——正上方＝第 0 格，依序順時針分配，離中心小於 12px 不選取任何一格（維持原裝備）。角度公式在 `Player.gd:_update_wheel_hover()` 跟畫圖用的 `scripts/ui/SpellWheel.gd:_draw()` 必須用同一個基準（`-PI/2` 起算、順時針），兩邊已經用 headless 腳本對過，分別改動時要注意別讓基準跑掉。
-- 輪盤開啟時，`Player._physics_process()` 整段提前 `return`，不處理移動/吟唱/右鍵瞬發/CD倒數——唯一能做的操作是選法術。如果開啟輪盤時人物正在吟唱，會直接取消吟唱（`_cancel_casting()`），已累積符紋作廢，不會讓吟唱繼續在背景跑。
-- 法術清單目前是 `Player.gd:equipped_spells`（固定 3 把：火球術/力場波/雷電箭），還沒有大廳裝備系統，所以輪盤顯示的就是這份清單本身，不是「已裝備的 3 個欄位」那套（`DEMO_GOALS.md` §2.5 的 attack/buff/displacement 分類要等真的有對應類型法術才有意義）。
-- `scripts/ui/SpellWheel.gd`：純畫面呈現，不做任何選取判定，`Player.gd` 透過訊號（`spell_wheel_opened`/`spell_wheel_hover_changed`/`spell_wheel_closed`）告訴它要畫什麼、`Main.gd` 負責轉接（跟 `CastBar`/`RuneContainer` 一樣的既有模式）。畫的是**真正的圓盤，依法術數量等分成扇形**（手動建構扇形 polygon，Godot 沒有內建畫扇形的函式），不是三個分開的小圖示。三格顏色對應各自法術在遊戲裡的特效色（火球=橘、力場波=紫、雷電箭=電光藍），目前裝備中的那一格外緣有白色實線標出來，滑鼠懸停的那一格填色加亮。
-
-### 4.5 火球術的選點介面（`AoETargetingReticle.gd`）
-跟輪盤不一樣，這個畫在**世界座標**（施法者周圍的 `max_range` 邊界淡圈、施法者到落點的連線、落點的範圍預覽圈），所以是 `Main`底下跟 `Arena`/`Player` 同層的 `Node2D`，不是 `UI` CanvasLayer 裡的 `Control`。靠 `get_tree().paused = true` 做**真正的暫停**（不是輪盤那種 `Engine.time_scale` 子彈時間），`_ready()` 裡把自己的 `process_mode` 設成 `PROCESS_MODE_ALWAYS` 才能在暫停時繼續讀滑鼠/畫圖/接收確認輸入。左鍵（`cast_spell`）確認，右鍵（`instant_cast`）或 Esc 取消；滑鼠超出 `max_range` 時指示圈會鎖在邊界上並變灰。細節跟設計理由見 `SPELL_SYSTEM.md` §8.13。
-
-### 4.6 基礎 Dash（`DEMO_GOALS.md` §2.4）
-**第一版做錯了兩件事**：
-1. 用 `move_and_collide()` 單次跳到終點，那是 Blink（瞬移），不是 Dash（衝刺）——`DEMO_GOALS.md` §2.4 原文寫「瞬移」其實是描述不準確，已經在這裡糾正，不是照抄原文的錯誤說法。真正的 Dash 是短時間內的高速移動過程：按下空白鍵後，方向定住（過程中不再改變），`DASH_DURATION`（0.12 秒）內用 `DASH_SPEED`（1800 px/s）持續呼叫跟一般移動一樣的 `move_and_slide()`，會自然貼牆滑行、碰到牆就停下，不是瞬間穿過去再被拉回來。用 headless 腳本讓真正的 engine physics tick 跑過（不是手動呼叫函式模擬，那樣會因為 `move_and_slide()` 內部讀的是引擎自己的 tick delta 而失真）：開放空間 8 個 tick 跑完全程，總距離 240px（比理論值 216px 多一點，是 0.12 秒在 60fps 下只能取整數幀的正常誤差，不是 bug）；貼著牆時自然停在牆邊，沒有穿牆。
-2. 方向原本取滑鼠位置，跟施法瞄準用同一個方向來源——但衝刺是移動類動作，該跟著「目前移動方向」（WASD）走，不是滑鼠，兩者語意不同，混用會讓操作感覺不自然。改成 `_start_dash()` 直接讀目前按著的 WASD；站著不動（沒按任何方向鍵）時，用 `last_move_direction`（`_process_movement()` 裡每次有實際移動輸入就更新的最後移動方向），不會因為站著不動就無法衝刺或衝去奇怪的方向。用 headless 腳本驗證過：按著 `move_up` 時衝刺方向是 `(0,-1)`；放開後站著不動，沿用剛剛的 `(0,-1)`；改按 `move_right` 後變成 `(1,0)`，當下輸入永遠優先於上次方向。
-
-目前**只實作了「未裝備位移法術」這個分支**——`DEMO_GOALS.md` §2.4 的另一半（已裝備位移法術時，空白鍵改觸發該法術走 `AoETargetingDelivery` 選點流程）要等真的有位移類法術時才有東西可以接，`equipped_spells` 目前 3 把全是攻擊類，這段分流邏輯還沒有存在的理由。按下空白鍵只在 `_input()` 設一個 `dash_requested` flag，實際觸發延到 `_physics_process()` 做，跟其他移動/物理操作在同一個時機點，吟唱中或輪盤開啟時會被忽略（這兩個狀態本來就鎖定移動），衝刺進行中（`is_dashing`）也不會同時處理一般移動。不走 `Spell`/`SpellDelivery` 架構、不佔用法術欄位、沒有冷卻（如果實測覺得太容易連續衝刺可以再加）。
-
-### 4.7 符紋重新命名為「超魔專長」，大廳法術格系統落地
-
-使用者決定把「符紋」整個改名成「超魔專長」——純粹是名稱調整，判定邏輯（前綴匹配＋pending 機制、`COMBO_MAX_GAP` 時間窗口）完全沒變，`Player.gd` 的 `RUNE_COMBOS`→`ARCANE_FEATS`、`accumulated_runes`→`accumulated_feats`、`rune_added`→`feat_added` 訊號、`_rune_to_effects`→`_feat_to_effects`，`Main.tscn` 的 `RuneContainer`→`FeatContainer`，UI 文字（吟唱提示、成功/失敗訊息）都改成「超魔專長」措辭。§3 整節原本的「符紋」敘述在概念上仍然成立，之後有空再整體替換用詞，目前先確保程式碼跟新文件用語一致，不強制回頭改 §3 的歷史敘述文字。
-
-**超魔專長的性質也在這次澄清確定**：角色天生就會全部（`ARCANE_FEATS` 清單），不綁定特定法術，吟唱任何法術時都能打出同一組按鍵序列——**真正要配置的不是專長，是法術**。Demo 階段超魔專長固定不解鎖，正式版才會有「學習／強化」機制（§6.2 待決策清單新增這一項）。
-
-**法術格系統**（對應 `DEMO_GOALS.md` §2.5、§7.2）：角色固定 6 格法術欄位（`GameState.TOTAL_SLOTS`），每把法術有 `Spell.slot_cost`（火球術3／力場波2／雷電箭1，剛好佔滿6格），玩家在大廳場景（`scenes/Lobby.tscn`）勾選要帶上戰場的法術，超過格數預算時直接拒絕這次勾選並反紅閃一下（不是「允許選超但出發按鈕變灰」那種中間態）。
-
-新增一個 autoload 單例 `scripts/state/GameState.gd`，負責：
-- `CATALOG`：法術總表（目前 3 把路徑），新增法術只需要改這裡，大廳/輪盤都會自動反映。
-- `equipped_spells`：大廳勾選結果，`Lobby.gd` 按下「出發」時寫入，`Player.gd:_ready()` 讀取。
-- `get_equipped_or_default()`：`equipped_spells` 為空時 fallback 成全部法術——這是為了保留「直接在 editor 開 `Main.tscn` 測試，不經過大廳」的工作流程，不會因為跳過大廳就壞掉或要求額外設定。
-
-`Player.gd:equipped_spells` 不再是寫死 `preload()` 三把，改成 `_ready()` 時呼叫 `GameState.get_equipped_or_default()`，數量不再固定是 3——法術輪盤（`SpellWheel.gd`／`Player.gd:_update_wheel_hover()`）的角度公式原本就是用 `TAU / float(n)` 通用寫法，沒有寫死 3 這個數字，所以直接支援任意把數（已用 headless 腳本針對 N=6 重新跑過一次格與格之間的角度反推驗證，跟 N=3 時用的是完全相同的公式）。
-
-`project.godot` 的 `run/main_scene` 改成指向 `Lobby.tscn`，`Main.tscn` 變成「戰鬥場景」，透過 `Lobby.gd:_on_depart_pressed()` 的 `get_tree().change_scene_to_file()` 切換過去。
+兩個分頁清單內的按鈕都套用自訂的 `focus` 樣式（`expand_margin` 設為 0，框線貼齊按鈕邊界而非往外凸出），避免按鈕邊緣貼齊 `ScrollContainer` 裁切邊界時框線被裁掉。
 
 ---
 
-## 5. 專案結構
+## 3. 戰鬥系統
 
-> 目錄依領域分類（`entities`/`spells`/`core`/`fx`），`scripts/`/`scenes/`/`resources/` 三棵樹用同一套分類方式對齊。
+### 3.1 右鍵瞬發
+`instant_cast`（滑鼠右鍵）：固定傷害＝裝備中法術的基礎傷害乘上 `INSTANT_CAST_DAMAGE_MULT`（0.8），不經過吟唱/超魔專長強化。CD 固定 `RIGHTCLICK_CD = 3.0` 秒，UI 顯示冷卻進度條。瞬發跳過的只是吟唱/專長累積階段，不影響 delivery 本身的運作方式——如果裝備中法術是鎖定選點類型，右鍵瞬發一樣會暫停遊戲等待選位置。
+
+### 3.2 法術切換輪盤
+按住 Ctrl（`Input.is_key_pressed(KEY_CTRL)`，不走 Input Map）彈出輪盤，`Engine.time_scale` 降到 0.25（子彈時間，怪物與場上一切持續運作只是變慢，不是暫停）。以 Ctrl 按下那一刻的滑鼠位置為輪盤中心，滑鼠相對中心的角度決定選中哪一格（正上方為第0格，順時針等分，離中心 12px 內不選取任何格）。放開 Ctrl 或點擊左鍵都會確認並收起輪盤。輪盤開啟時 `Player._physics_process()` 整段提前 return，唯一能做的操作是選法術；若此時正在吟唱會直接取消。支援任意把數（角度公式用 `TAU / float(n)`，不綁定固定數量）。`scripts/ui/SpellWheel.gd` 純畫面呈現，不做選取判定，判定邏輯在 `Player.gd`。
+
+### 3.3 AoE 選點介面
+`AoETargetingDelivery` 施放時觸發，畫在世界座標（施法者周圍的 `max_range` 邊界淡圈、落點範圍預覽圈），用 `get_tree().paused = true` 做真正的暫停（跟輪盤的子彈時間不同），節點本身 `process_mode = PROCESS_MODE_ALWAYS` 才能在暫停時繼續運作。左鍵確認、右鍵或 Esc 取消；滑鼠超出 `max_range` 時指示圈鎖在邊界並變灰。
+
+### 3.4 基礎 Dash
+空白鍵觸發，不走 `Spell`/`SpellDelivery` 架構、不佔用法術欄位、沒有冷卻。方向取按下當下的 WASD（跟滑鼠瞄準方向無關），站著不動時用 `last_move_direction`（上一次有實際移動輸入的方向）。`DASH_DURATION`（0.12秒）內用 `DASH_SPEED`（1800 px/s）持續呼叫 `move_and_slide()`，會自然貼牆滑行、碰到牆就停下，不是瞬移。吟唱中、輪盤開啟、衝刺進行中都不會觸發/疊加。
+
+目前只有這個基礎分支——裝備位移類法術時改走 `AoETargetingDelivery` 選點移動施法者座標的分支尚未有對應法術可驗證。
+
+---
+
+## 4. 競技場
+
+### 4.1 三環結構
+場地是三個同心圓區域，圓心 `ARENA_CENTER = Vector2(600, 350)`：
+
+| 區域 | 半徑範圍 | 說明 |
+|---|---|---|
+| 玩家場地 | 0 ~ `PLAYER_ZONE_RADIUS`(260) | 玩家唯一能站的地方，`Main.tscn` 的牆壁碰撞（`CollisionPolygon2D`）圍這一圈 |
+| 縫隙 | 260 ~ 360（寬度 `GAP_WIDTH`=100） | 完全淨空，不鋪地磚，兩個場地物理上不連通 |
+| boss 環道 | `BOSS_RING_INNER_RADIUS`(360) ~ `ARENA_RADIUS`(450) | boss 與分身唯一出現的地方，環道寬度90 |
+
+boss 固定巡邏軌道半徑 `BOSS_TRACK_RADIUS = (BOSS_RING_INNER_RADIUS + ARENA_RADIUS) / 2.0`（算出來410，環道正中央）。牆體視覺厚度 `WALL_THICKNESS = 24`。
+
+玩家與 boss 物理上永遠碰不到面，所有互動只能靠法術隔空進行。完整的 boss 走位/招式機制見 `BOSS_DESIGN.md`。
+
+### 4.2 碰撞與反彈
+牆壁碰撞只圍 `PLAYER_ZONE_RADIUS`：`CollisionPolygon2D`（`build_mode = BUILD_SEGMENTS`，約48點描出圓）。boss/分身不走物理碰撞（手動控制 `global_position`，`collision_mask=0`），靠自身巡邏公式與邊界夾限維持在環道內。
+
+`SpellProjectile.gd` 的牆壁反彈（`bounces_off_walls=true` 的 delivery，目前只有雷電箭）不用物理碰撞：比較投射物到 `ARENA_CENTER` 的距離跟 `PLAYER_ZONE_RADIUS`（玩家自己的場地邊界，不是 boss 環道的 `ARENA_RADIUS`），超出範圍時用圓心到投射物的偏移向量當法線、`Vector2.bounce(normal)` 處理反射。
+
+---
+
+## 5. 視覺風格
+
+Magicka 調性：Q 版、鮮豔、誇張特效的奇幻風格。全部用 Godot `_draw()` 程式繪圖 + `CPUParticles2D` 動態生成，無外部美術資源。
+
+### 5.1 3/4 俯視角慣例
+地板維持純俯視方格座標系不變（不是真等角投影），角色/怪物造型改用「有正面、帶高度感」的畫法：
+- **腳下陰影**：壓扁橢圓（多邊形近似），讓角色站在地上而不是貼平的貼紙。
+- **身體左右分色**：同一塊造型左右兩片不同明暗（暗側 `darkened(0.25)`），模擬最簡單的立體感。
+- **臉部正面化**：頭部圓形疊在身體肩線之上，帶兩個眼睛點，不是俯視頭頂。
+
+角色不用 `look_at()` 連續旋轉，只用 `facing_right`（滑鼠在角色左/右的布林值）決定法杖畫在哪一側（x 座標鏡射），角色本身固定朝下。
+
+地板磚塊、爆炸特效、範圍選取圈也延伸同一套「有高度感」語言但不做真投影：磚塊加「左上亮、右下暗」浮雕邊線模擬厚度；`MagicFX.gd` 的爆炸/範圍特效套 `GROUND_SQUASH = 0.5` 常數壓扁成橢圓（`Node2D.scale` 或手動橢圓多邊形，依節點是否能直接套 scale 而定）；圓形牆壁本身不改橢圓（要跟實際碰撞形狀一致），用內緣亮邊/外緣暗邊模擬牆體高度。
+
+### 5.2 共用特效（`MagicFX.gd`）
+`class_name MagicFX`，提供三個 static 工具方法：`spawn_burst()`（爆發粒子）、`make_sparkle_trail()`（拖尾粒子，不套 `GROUND_SQUASH`，軌跡在空中飛不需要壓扁）、`spawn_explosion_ring()`（範圍特效用的擴張淡出圈）。
+
+### 5.3 解析度
+`project.godot`：`viewport_width/height = 1280x720`（設計基準解析度），`stretch/mode = "canvas_items"`，`stretch/aspect = "keep"`。FHD(1920x1080)／2K(2560x1440)／4K(3840x2160) 都是同樣 16:9，畫面等比例縮放貼合視窗。
+
+---
+
+## 6. 專案結構
 
 ```
 spellcraft-poc/
-├── project.godot                       # Godot 4.6 專案設定，含 input map、[autoload] GameState、啟動場景＝Lobby.tscn
+├── project.godot                       # Godot 4.6 專案設定，input map、[autoload] GameState、啟動場景＝Lobby.tscn
 ├── scenes/
-│   ├── Lobby.tscn                      # 大廳：法術格配置畫面（§4.7），啟動場景
-│   ├── Main.tscn                       # 戰鬥場景：背景、Player、TargetDummy、選點介面、UI（吟唱條/專長顯示/CD條/輪盤）
+│   ├── Lobby.tscn                      # 大廳：法術格配置畫面，啟動場景
+│   ├── Main.tscn                       # 戰鬥場景：Arena、Player、Boss、選點介面、UI（吟唱條/專長列/CD條/輪盤/除錯面板）
 │   ├── entities/
 │   │   ├── Player.tscn                 # CharacterBody2D + CollisionShape2D + Camera2D
-│   │   └── TargetDummy.tscn
+│   │   └── boss/                       # Boss.tscn／BossClone.tscn／BossFireball.tscn／BossOrb.tscn／BossSuctionZone.tscn（見 BOSS_DESIGN.md）
 │   └── spells/
-│       └── SpellProjectile.tscn        # 投射物類法術共用場景（目前只有雷電箭在用）
+│       └── SpellProjectile.tscn        # 投射物類法術共用場景
 ├── scripts/
-│   ├── Main.gd                         # UI 綁定：吟唱進度條、專長圖示列、CD 條、輪盤轉接
-│   ├── Lobby.gd                        # 大廳邏輯：格數預算檢查、勾選/反紅、寫入 GameState、切換到 Main.tscn（§4.7）
+│   ├── Main.gd                         # UI 綁定 + 開發用除錯面板（F3）
+│   ├── Lobby.gd                        # 大廳邏輯：格數預算檢查、分頁切換、法術說明顯示、輪盤排序
 │   ├── state/
-│   │   └── GameState.gd                # Autoload 單例：法術總表、TOTAL_SLOTS、equipped_spells 跨場景傳遞（§4.7）
+│   │   └── GameState.gd                # Autoload 單例：法術總表、超魔專長表、equipped_spells 跨場景傳遞
 │   ├── core/
-│   │   └── Arena.gd                    # 場地地板/牆體程式繪圖（class_name Arena，ARENA_WIDTH/HEIGHT 全域常數）
+│   │   └── Arena.gd                    # 競技場地板/牆體程式繪圖（三環結構）
 │   ├── entities/
-│   │   ├── Player.gd                   # 移動、吟唱狀態機、超魔專長判定、發射邏輯、輪盤選取、角色繪製（核心檔案）
-│   │   └── TargetDummy.gd              # 假目標血量、受擊回饋、怪物 AI 狀態機、擊退位移、繪製
+│   │   ├── Player.gd                   # 移動、吟唱狀態機、超魔專長判定、buff系統、發射邏輯、輪盤選取、角色繪製
+│   │   └── boss/                       # Boss.gd/BossClone.gd/BossFireball.gd/BossOrb.gd/BossSuctionZone.gd（見 BOSS_DESIGN.md）
 │   ├── fx/
-│   │   └── MagicFX.gd                  # 共用特效工具（class_name，static 方法：burst/trail/explosion_ring）
+│   │   └── MagicFX.gd                  # 共用特效工具
 │   ├── ui/
-│   │   ├── SpellWheel.gd               # 法術切換輪盤的畫面呈現（螢幕座標，不做選取判定，支援任意把數，見 §4.4、§4.7）
-│   │   └── AoETargetingReticle.gd      # 火球術選點介面（世界座標，暫停時仍運作，見 §4.5）
+│   │   ├── SpellWheel.gd               # 戰鬥法術輪盤畫面呈現
+│   │   ├── AoETargetingReticle.gd      # AoE 選點介面
+│   │   ├── CharacterPortrait.gd        # 大廳角色形象
+│   │   ├── SlotGrid.gd                 # 大廳法術格視覺化
+│   │   └── LoadoutWheelPreview.gd      # 大廳輪盤排序預覽（拖拽交換）
 │   └── spells/
-│       ├── Spell.gd                    # 法術定義（Resource）：id/cast_time/max_range/slot_cost/delivery/base_effects
-│       ├── SpellDelivery.gd            # 發射方式基底（Resource），fire() 有 instant 參數供右鍵瞬發用
-│       ├── ProjectileDelivery.gd       # 直線投射物（travel_time 反推速度或 fixed_speed 固定值、可選牆壁反彈）
-│       ├── SelfDelivery.gd             # 以施法者為中心的範圍 delivery（力場波在用）
-│       ├── AoETargetingDelivery.gd     # 鎖定選點的範圍 delivery（火球術在用）
-│       ├── ProjectileImpact.gd         # 投射物「命中/飛行耗盡後要幹嘛」變體基底
-│       ├── SingleHitImpact.gd / ExplosiveImpact.gd / PiercingImpact.gd  # 目前只有 PiercingImpact 有法術在用
-│       ├── SpellEffect.gd              # 命中/疊加效果基底（Resource）
-│       ├── DamageEffect.gd
-│       └── SpellProjectile.gd          # 投射物飛行、碰撞傷害、拖尾特效、依 max_range 真實距離判定存活
+│       ├── Spell.gd                    # 法術定義（Resource）
+│       ├── SpellDelivery.gd            # 發射方式基底
+│       ├── ProjectileDelivery.gd       # 直線投射物
+│       ├── SelfDelivery.gd             # 以施法者為中心對周圍敵人造成範圍傷害
+│       ├── SelfBuffDelivery.gd         # 效果套用在施法者自己身上（buff類法術）
+│       ├── AoETargetingDelivery.gd     # 鎖定選點的範圍傷害
+│       ├── ProjectileImpact.gd         # 投射物命中/飛行耗盡後行為變體基底
+│       ├── SingleHitImpact.gd / ExplosiveImpact.gd / PiercingImpact.gd
+│       ├── SpellEffect.gd              # 命中/疊加效果基底（INSTANT/DURATION）
+│       ├── DamageEffect.gd / InvisibilityEffect.gd / SpeedBuffEffect.gd
+│       └── SpellProjectile.gd          # 投射物飛行、碰撞傷害、拖尾特效
 └── resources/
     └── spells/
         ├── Fireball.tres               # AoETargetingDelivery，slot_cost=3
         ├── ForceWave.tres              # SelfDelivery，slot_cost=2
-        └── LightningBolt.tres          # ProjectileDelivery + PiercingImpact + 牆壁反彈 + fixed_speed，slot_cost=1
+        ├── LightningBolt.tres          # ProjectileDelivery + PiercingImpact + 牆壁反彈，slot_cost=1
+        ├── Invisibility.tres           # SelfBuffDelivery + InvisibilityEffect，slot_cost=2
+        └── SpeedBoost.tres             # SelfBuffDelivery + SpeedBuffEffect，slot_cost=1
 ```
 
-法術系統架構（`Spell`/`SpellDelivery`/`SpellEffect`/`ProjectileImpact`）的設計決策記錄在 `SPELL_SYSTEM.md`，不重複寫在這裡。`TargetDummy.gd` 目前已經有一個跳躍+範圍落地傷害的簡易 AI（`AiState` 狀態機），不是本節原本（PoC 初版）排除的「真正怪物 AI」範圍，§2.3 的排除清單只反映 PoC 最初階段，後續擴充已超出去，詳見 `ROADMAP.md`。
+法術系統架構的完整欄位/類別說明記錄在 `SPELL_SYSTEM.md`，不重複寫在這裡。
 
-### 5.1 Input Map（`project.godot`）
+### 6.1 Input Map（`project.godot`）
 | Action | 綁定 |
 |---|---|
 | `move_up/down/left/right` | W/A/S/D（實體鍵碼） |
 | `cast_spell` | 滑鼠左鍵 |
 | `instant_cast` | 滑鼠右鍵 |
 
-Ctrl（法術切換輪盤）跟空白鍵（Dash）都**沒有**走 Input Map，直接在 `Player.gd` 用 `Input.is_key_pressed(KEY_CTRL)`／`event.physical_keycode == KEY_SPACE` 判斷（見 §4.4、§4.6），避免手刻 `project.godot` 的 `InputEventKey` 設錯 keycode 數值卻不會噴錯的風險。
+Ctrl（法術輪盤）、空白鍵（Dash）、F3（除錯面板）都不走 Input Map，直接在腳本用符號常數判斷（`Input.is_key_pressed(KEY_CTRL)` 等），避免手刻 `InputEventKey` 設錯 keycode 卻不會報錯的風險。
 
-### 5.2 執行環境
-- Godot 4.6.2.stable，渲染後端 `gl_compatibility`（相容性模式，PoC 階段優先求穩定不求效能）。
-- 無頭測試：`Godot --headless --quit-after N --path .` 可快速檢查腳本語法錯誤（無法測試實際輸入手感，必須用 editor 跑）。
-- 新增帶 `class_name` 的腳本後，需要先跑一次 `Godot --headless --import --path .` 讓全域類別註冊，否則會出現 `Identifier "X" not declared` 的假錯誤。
-
----
-
-## 6. 已驗證結論與開放問題
-
-### 6.1 已驗證
-- 「吟唱中打方向序列決定強化」這個核心互動，實測手感是使用者想要的方向（已確認好玩，值得繼續投入）。
-- 前綴匹配 + pending 機制可以讓「賭強效果 vs 穩拿弱效果」的取捨自然浮現在輸入節奏裡，不需要額外 UI 說明。
-- 拿掉「打太快判定失敗」的下限懲罰是正確方向——遊戲不該懲罰手速快，應只懲罰拖延。
-
-### 6.2 待驗證/待決策（交給後續接手者）
-1. **`COMBO_MAX_GAP = 0.15` 是否是最終數值**——目前只是手感測試後的暫定值，不同符紋長度（2鍵 vs 4鍵）是否該用不同窗口，尚未測試。
-2. **pending 與新序列交界的根本行為**（見 3.4）——目前只是縮短窗口緩解體感，底層邏輯沒有重構，共享前綴符紋變多時建議重新設計或至少重新測試。
-3. **吟唱被怪物打斷時怎麼處理**——目前完全沒有怪物會主動攻擊，吟唱不會被中斷，正式版需要設計「被打斷時符紋全部作廢還是部分保留」。
-4. **範圍型法術的俯視選圈與遊戲暫停**——完全未實作，需要另外規劃輸入與鏡頭切換。
-5. **Mana／施放頻率限制**——原始構想中標註「視情況加入」，PoC 階段尚未決定要不要做。
-6. **超魔專長組合表的平衡性與數量上限**——目前 5 組純屬示範，正式設計需要考慮「法術格系統」（§4.7）與「專長學習/強化」如何與這套輸入機制掛鉤（§4.7 已把「配置的是法術，不是專長」這個分工定下來，但專長本身還沒有解鎖/強化機制，Demo 階段固定全開）。
-7. **假目標打到 0 血直接重置滿血**——沒有死亡/掉落邏輯，正式戰鬥循環（打王→掉素材）完全未開始實作。
-8. **大廳重新進入時的狀態保留**——`Lobby.gd` 目前用 `GameState.equipped_spells.duplicate()` 讓玩家重新進大廳時沿用上次配置，但如果玩家中途沒按「出發」就直接關閉遊戲，`GameState` 本身不會持久化到磁碟，下次啟動一樣是空清單走 fallback，這點是刻意的（Demo 階段不需要存檔），但如果之後要加存檔功能，`GameState` 會是最直接的掛鉤點。
+### 6.2 執行環境
+- Godot 4.6.2.stable，渲染後端 `gl_compatibility`。
+- 無頭測試：`Godot --headless --quit-after N --path .` 可快速檢查腳本語法錯誤，無法測試實際輸入手感。
+- 新增/修改帶 `class_name` 的腳本後，需要跑一次 `Godot --headless --import --path .` 讓全域類別註冊，否則可能出現假的 `Identifier "X" not declared` 錯誤。
 
 ---
 
-## 7. 給後續接手者的建議閱讀順序
-1. 先讀本文件第 3 節（核心機制），這是整個專案的靈魂，務必先理解 pending 機制與失敗判定的設計意圖，再動手改動任何時間常數。（注意：§3 的敘述仍沿用「符紋」這個舊名詞，§4.7 已說明這只是用詞歷史，概念與現在的「超魔專長」完全一致，不是兩套系統。）
-2. 打開 Godot editor 跑一次，流程是 `Lobby.tscn`（大廳配置法術）→ 按「出發」→ `Main.tscn`（戰鬥），實際體驗現在的手感，建立直覺後再看程式碼。
-3. 讀 `Player.gd` 全文（約 380 行），這是唯一的複雜邏輯檔案，其餘檔案都相對單純。
-4. 若要擴充超魔專長表，務必注意共享前綴的交互行為（3.2、3.4），建議先用現有的 `UU`/`UULR` pair 跑過一輪手測，再加新組合。
-5. 若要新增法術，記得在 `GameState.gd:CATALOG` 加上資源路徑，否則大廳跟輪盤都不會出現這把法術——這是目前唯一的法術總表來源，別漏掉。
+## 7. 已知限制與開放問題
+
+- **`COMBO_MAX_GAP = 0.15` 是示範值**，不同序列長度（2鍵 vs 4鍵）是否該用不同窗口尚未測試。
+- **吟唱被怪物打斷的處理尚未設計**：目前怪物攻擊不會打斷玩家吟唱。
+- **位移類法術**：`AoETargetingDelivery` 移動施法者座標的收尾路徑尚未有對應法術驗證過。
+- **Mana／施放頻率限制**：尚未決定是否加入。
+- **超魔專長組合表的平衡性**：目前 5 組為示範數值，未做最終平衡；專長本身還沒有解鎖/強化機制。
+- **真實 HP／死亡／結算畫面**：玩家被打只閃光不扣血；boss 血量歸零會重置滿血，不是真正死亡（分身的 3HP 是例外，會真的消失）。
+- **大廳狀態不持久化**：`GameState` 不會存到磁碟，重啟遊戲會回到空清單走 fallback；若需要存檔功能，`GameState` 是最直接的掛鉤點。
+
+---
+
+## 8. 建議閱讀順序
+1. 先讀本文件第1節（超魔專長序列輸入系統），這是整個專案的核心機制。
+2. 打開 Godot editor 跑一次，流程是 `Lobby.tscn`（大廳配置法術）→「出發」→ `Main.tscn`（戰鬥），建立操作直覺。
+3. 讀 `Player.gd` 全文，這是最核心的邏輯檔案。
+4. 讀 `SPELL_SYSTEM.md` 理解法術架構，讀 `BOSS_DESIGN.md` 理解 boss 行為。
+5. 新增法術記得在 `GameState.gd:CATALOG` 加上資源路徑，否則大廳跟輪盤都不會出現這把法術。

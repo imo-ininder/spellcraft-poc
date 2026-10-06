@@ -5,7 +5,7 @@ func _ready() -> void:
 	equipped_spells = GameState.get_equipped_or_default()
 	equipped_spell = equipped_spells[0]
 
-const SPEED := 260.0
+const SPEED := 130.0 # 原本260，使用者嫌跟boss都太快，砍半
 const COMBO_MAX_GAP := 0.15
 const RIGHTCLICK_CD := 3.0
 const INSTANT_CAST_DAMAGE_MULT := 0.8
@@ -21,6 +21,76 @@ var dash_timer := 0.0
 var dash_direction := Vector2.ZERO
 ## 上一次 WASD 有輸入時的方向，Dash 站著不動時用這個當衝刺方向
 var last_move_direction := Vector2.DOWN
+
+## 外部效果（目前是 Boss 吸引懲罰）對移動速度的乘數，1.0＝正常。由施加效果的那一方
+## （Boss 統一處理）每幀直接設定／重置，Player 自己不追蹤「目前中了什麼減速」。
+var speed_multiplier := 1.0
+
+## === DURATION 類 buff（SpellEffect.gd 的 on_start()/on_expire()，SPELL_SYSTEM.md §2.2）===
+## active_buffs：[{effect: SpellEffect, timer: float}]，倒數狀態存在這裡（角色節點身上），
+## 不存在 SpellEffect 這個 Resource 上——CLAUDE.md 架構規則1，Resource 是共享引用，兩個角色
+## 裝備同一份 .tres 的話，倒數計時器不能共用。同一個 buff_id 再次命中時刷新時間，不疊加兩份
+## 獨立倒數（目前沒有任何法術要求疊加同類 buff，見 add_buff()）。
+var active_buffs: Array = []
+
+## 隱形術（InvisibilityEffect）直接讀寫這個欄位，不是算出來的——Boss.gd/BossFireball.gd/
+## BossOrb.gd/BossSuctionZone.gd 的 _find_player() 在這是 true 時一律回傳 null，讓 boss
+## 「找不到玩家」。施放任意法術會中斷隱形，判斷點在 _fire_spell()/_fire_instant_spell() 開頭，
+## 不是這個欄位自己的邏輯（中斷的是「玩家做了什麼」，不是倒數到期，兩件事分開處理）。
+var is_invisible := false
+
+## 速度提升（SpeedBuffEffect）直接讀寫這個欄位。刻意跟 speed_multiplier（上面，Boss 吸引懲罰
+## 減速專用）分開存，兩者在 _process_movement() 相乘生效，不會互相覆蓋——這正是 SPELL_SYSTEM.md
+## §2.2 點名的風險（同一個欄位被多個獨立來源寫入會互相蓋掉），這次新增第二個速度來源時刻意避開。
+var speed_boost_mult := 0.0
+
+## 同類型 buff 再次命中時刷新倒數，不是疊加兩份（沒有法術要求疊加，保持最簡單的規則）。
+func add_buff(effect: SpellEffect) -> void:
+	for entry in active_buffs:
+		if entry.effect.buff_id == effect.buff_id:
+			entry.timer = effect.duration
+			return
+	active_buffs.append({"effect": effect, "timer": effect.duration})
+	effect.on_start(self)
+
+func has_buff(buff_id: String) -> bool:
+	for entry in active_buffs:
+		if entry.effect.buff_id == buff_id:
+			return true
+	return false
+
+func _process_buffs(delta: float) -> void:
+	for i in range(active_buffs.size() - 1, -1, -1):
+		var entry = active_buffs[i]
+		entry.timer -= delta
+		if entry.timer <= 0.0:
+			entry.effect.on_expire(self)
+			active_buffs.remove_at(i)
+
+## 隱形中斷：施放任意法術（吟唱完成或右鍵瞬發）當下，如果正在隱形就立即結束，不等自然倒數——
+## 重新施放隱形術本身也會先在這裡被中斷一次，再被這次施放重新安裝，等於無縫刷新，不需要特判。
+func _break_invisibility_on_cast() -> void:
+	if not is_invisible:
+		return
+	for i in range(active_buffs.size() - 1, -1, -1):
+		var entry = active_buffs[i]
+		if entry.effect.buff_id == "invisibility":
+			entry.effect.on_expire(self)
+			active_buffs.remove_at(i)
+
+## 被擊退時（目前只有 Boss 吸引懲罰的「拉近後重擊」會觸發）：跟怪物的 apply_knockback() 同一套
+## 「力道+摩擦力線性衰減」做法，不是瞬間改 global_position 跳過去——這樣玩家會看到自己被
+## move_and_slide() 推著滑開（會自然貼牆/碰撞），是一段有過程的位移，不是閃現。
+## KNOCKBACK_FRICTION 數值刻意跟 Boss.gd 的同名常數一樣，純粹是手感一致，兩邊沒有程式上的關聯。
+const KNOCKBACK_FRICTION := 900.0
+var knockback_velocity := Vector2.ZERO
+
+func apply_knockback(force: Vector2) -> void:
+	knockback_velocity += force
+
+## 角色大致朝左還是朝右（不是連續旋轉角度），每個 physics frame 依滑鼠相對位置更新，
+## _draw() 用這個決定法杖畫在哪一側，見 _physics_process() 裡原本 look_at() 的位置。
+var facing_right := true
 
 ## 目前裝備的法術，順序對應輪盤各格，由 GameState.equipped_spells（大廳配置結果）在 _ready() 填入。
 ## 數量不固定（DEMO_GOALS.md §2.5 的格數預算允許任意把數塞滿 6 格），輪盤的角度公式本來就支援任意數量。
@@ -38,14 +108,7 @@ signal spell_wheel_opened(center, current_index)
 signal spell_wheel_hover_changed(index)
 signal spell_wheel_closed(selected_index)
 
-# 超魔專長組合表：按鍵序列 -> 效果。序列越長/越難打，效果越強。角色天生就會全部，Demo 階段固定不解鎖。
-const ARCANE_FEATS := {
-	"UU": {"label": "+傷害", "color": Color(1, 0.3, 0.3), "damage_mult": 0.5},
-	"UDU": {"label": "+強力傷害", "color": Color(1, 0.1, 0.6), "damage_mult": 1.2},
-	"UULR": {"label": "+終極爆發", "color": Color(1, 0.8, 0.1), "damage_mult": 1.8},
-	"RR": {"label": "+吟唱速度", "color": Color(0.2, 0.9, 1.0), "cast_speed_bonus": 0.5},
-	"LL": {"label": "-吟唱速度", "color": Color(0.5, 0.4, 0.8), "cast_speed_bonus": -0.5},
-}
+# 超魔專長組合表搬到 GameState.ARCANE_FEATS（大廳的唯讀一覽分頁也需要讀這份表，見該檔案註解）。
 
 const DIR_KEYS := {
 	"move_up": "U",
@@ -84,6 +147,8 @@ func _input(event: InputEvent) -> void:
 		dash_requested = true
 
 func _physics_process(delta: float) -> void:
+	_process_buffs(delta)
+
 	var ctrl_held := Input.is_key_pressed(KEY_CTRL)
 	if not ctrl_held:
 		wheel_suppress_reopen = false
@@ -91,6 +156,11 @@ func _physics_process(delta: float) -> void:
 		_open_wheel()
 	elif not ctrl_held and wheel_open:
 		_close_wheel()
+
+	if knockback_velocity.length() > 1.0:
+		_process_knockback(delta)
+		queue_redraw()
+		return
 
 	if wheel_open:
 		dash_requested = false
@@ -120,7 +190,9 @@ func _physics_process(delta: float) -> void:
 		rightclick_cd_timer = max(0.0, rightclick_cd_timer - delta)
 		rightclick_cd_updated.emit(1.0 - rightclick_cd_timer / RIGHTCLICK_CD)
 
-	look_at(get_global_mouse_position())
+	# 不用 look_at() 整個角色跟著滑鼠連續旋轉——3/4視角風格只需要知道「大致朝左還是朝右」，
+	# 用來決定法杖畫在哪一側，不是真的要角色轉向瞄準方向（使用者覺得連續旋轉很怪）。
+	facing_right = get_global_mouse_position().x >= global_position.x
 
 	if fail_flash_timer > 0.0:
 		fail_flash_timer -= delta
@@ -196,6 +268,13 @@ func _process_dash(delta: float) -> void:
 		is_dashing = false
 		velocity = Vector2.ZERO
 
+## 擊退期間玩家拿不回操作權（跟移動/吟唱互斥），直到速度衰減到接近 0——跟 Boss.gd 擊退處理
+## 的 if knockback_velocity.length() > 1.0: ... else: knockback_velocity = Vector2.ZERO 是同一套邏輯。
+func _process_knockback(delta: float) -> void:
+	velocity = knockback_velocity
+	move_and_slide()
+	knockback_velocity = knockback_velocity.move_toward(Vector2.ZERO, KNOCKBACK_FRICTION * delta)
+
 func _process_movement() -> void:
 	var dir := Vector2.ZERO
 	if Input.is_action_pressed("move_up"):
@@ -208,7 +287,7 @@ func _process_movement() -> void:
 		dir.x += 1
 	if dir != Vector2.ZERO:
 		last_move_direction = dir.normalized()
-	velocity = dir.normalized() * SPEED
+	velocity = dir.normalized() * SPEED * speed_multiplier * (1.0 + speed_boost_mult)
 	move_and_slide()
 
 func _process_casting(delta: float) -> void:
@@ -243,9 +322,9 @@ func _handle_combo_key(key: String) -> void:
 	combo_last_input_time = now
 	var attempt := combo_buffer + key
 
-	var is_exact := ARCANE_FEATS.has(attempt)
+	var is_exact := GameState.ARCANE_FEATS.has(attempt)
 	var has_longer_prefix := false
-	for combo in ARCANE_FEATS.keys():
+	for combo in GameState.ARCANE_FEATS.keys():
 		if combo.length() > attempt.length() and combo.begins_with(attempt):
 			has_longer_prefix = true
 			break
@@ -267,7 +346,7 @@ func _handle_combo_key(key: String) -> void:
 	_fail_combo()
 
 func _commit_combo(key_string: String) -> void:
-	var feat = ARCANE_FEATS[key_string]
+	var feat = GameState.ARCANE_FEATS[key_string]
 	accumulated_feats.append(feat)
 	feat_added.emit(feat)
 	success_flash_timer = 0.2
@@ -309,26 +388,32 @@ func _feat_to_effects(feat: Dictionary) -> Array:
 		effects.append(DamageEffect.new(0.0, 0.0, float(feat["damage_mult"])))
 	return effects
 
+## DURATION 類效果（buff）跳過不呼叫 apply()——那條路徑是給 INSTANT 類效果疊加數值用的，
+## DURATION 類效果由 delivery（SelfBuffDelivery）直接拿 equipped_spell.base_effects 原始陣列
+## 呼叫 add_buff()，不經過這個攤平後的 stats dict，見 _fire_spell()/_fire_instant_spell()。
 func _base_stats() -> Dictionary:
 	var stats := {"damage": 0.0}
 	for effect in equipped_spell.base_effects:
-		effect.apply(stats)
+		if effect.apply_mode == SpellEffect.ApplyMode.INSTANT:
+			effect.apply(stats)
 	return stats
 
 func _fire_spell(feats: Array) -> void:
+	_break_invisibility_on_cast()
 	var stats := _base_stats()
 	for f in feats:
 		for effect in _feat_to_effects(f):
 			effect.apply(stats)
 	var dir := (get_global_mouse_position() - global_position).normalized()
-	equipped_spell.delivery.fire(self, dir, stats, equipped_spell.max_range)
+	equipped_spell.delivery.fire(self, dir, stats, equipped_spell.max_range, equipped_spell.base_effects)
 
 func _fire_instant_spell() -> void:
+	_break_invisibility_on_cast()
 	rightclick_cd_timer = RIGHTCLICK_CD
 	var stats := _base_stats()
 	stats.damage *= INSTANT_CAST_DAMAGE_MULT
 	var dir := (get_global_mouse_position() - global_position).normalized()
-	equipped_spell.delivery.fire(self, dir, stats, equipped_spell.max_range)
+	equipped_spell.delivery.fire(self, dir, stats, equipped_spell.max_range, equipped_spell.base_effects)
 
 func take_damage(_amount: float) -> void:
 	hazard_flash_timer = 0.25
@@ -348,18 +433,29 @@ func _draw() -> void:
 		glow_color = Color(1.0, 0.4, 0.4, 0.6)
 	elif is_casting:
 		robe_color = Color(0.55, 0.35, 0.9)
+	var robe_shade := robe_color.darkened(0.25)
+
+	# 腳下陰影：3/4視角風格的立體感來源（跟 CharacterPortrait.gd 同一套做法）。角色不再用 look_at()
+	# 連續旋轉，所以不需要反向 transform 抵銷旋轉這種麻煩事——角色本身就是固定朝向，陰影直接畫。
+	var shadow_points := PackedVector2Array()
+	for i in range(20):
+		var a: float = TAU * float(i) / 20.0
+		shadow_points.append(Vector2(0, 20) + Vector2(cos(a) * 13.0, sin(a) * 5.0))
+	draw_colored_polygon(shadow_points, Color(0, 0, 0, 0.3))
 
 	# 吟唱光環脈動
 	if is_casting:
 		var pulse_r := 26.0 + sin(cast_pulse) * 6.0
 		draw_arc(Vector2.ZERO, pulse_r, 0, TAU, 32, glow_color, 3.0, true)
 
-	# 長袍身體 (圓錐狀，用多邊形模擬)
-	var robe_points := PackedVector2Array([
-		Vector2(0, -20), Vector2(-16, 18), Vector2(16, 18)
-	])
-	draw_colored_polygon(robe_points, robe_color)
+	# 長袍身體：左右兩片不同明暗模擬簡單立體感，不是單一平塗三角形（3/4視角風格）。
+	var robe_left := PackedVector2Array([Vector2(0, -20), Vector2(-16, 18), Vector2(0, 18)])
+	var robe_right := PackedVector2Array([Vector2(0, -20), Vector2(16, 18), Vector2(0, 18)])
+	draw_colored_polygon(robe_left, robe_shade)
+	draw_colored_polygon(robe_right, robe_color)
 	draw_circle(Vector2(0, -20), 10, Color(0.95, 0.82, 0.65))
+	draw_circle(Vector2(-3.5, -18), 1.2, Color(0.2, 0.15, 0.15))
+	draw_circle(Vector2(3.5, -18), 1.2, Color(0.2, 0.15, 0.15))
 
 	# 尖帽子，隨 hat_bob 輕微搖晃
 	var hat_tilt := sin(hat_bob) * 0.08
@@ -369,9 +465,12 @@ func _draw() -> void:
 	draw_colored_polygon(hat_points, Color(0.25, 0.15, 0.5))
 	draw_circle(Vector2(0, -46).rotated(hat_tilt), 3, Color(1, 0.85, 0.3))
 
-	# 法杖 (朝向滑鼠方向延伸)，頂端發光球隨吟唱脈動
-	var staff_tip := Vector2(28, 0)
-	draw_line(Vector2(6, 4), staff_tip, Color(0.4, 0.28, 0.15), 3.0)
+	# 法杖：不再朝滑鼠方向延伸，改成固定舉在身體側邊，依 facing_right 決定畫在左側還是右側
+	# （x 座標整個鏡射），頂端發光球隨吟唱脈動。
+	var side := 1.0 if facing_right else -1.0
+	var staff_base := Vector2(6 * side, 4)
+	var staff_tip := Vector2(28 * side, 0)
+	draw_line(staff_base, staff_tip, Color(0.4, 0.28, 0.15), 3.0)
 	var orb_pulse := 4.0 + (sin(cast_pulse * 2.0) * 2.0 if is_casting else 0.0)
 	draw_circle(staff_tip, orb_pulse, glow_color)
 	draw_circle(staff_tip, orb_pulse * 0.5, Color(1, 1, 1, 0.9))
