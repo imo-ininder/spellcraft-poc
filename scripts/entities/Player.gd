@@ -10,6 +10,7 @@ extends CharacterBody2D
 ## 下面吟唱相關的函式都已經補上 null 檢查，這是過渡期的刻意狀態，不是忘了接資料來源。
 func _ready() -> void:
 	add_to_group("player")
+	current_node_id = current_graph.start_node_id
 	queue_redraw() # 陰影是靜態的，只需要畫一次，不用每幀呼叫
 
 const SPEED := 130.0 # 原本260，使用者嫌跟boss都太快，砍半
@@ -118,9 +119,27 @@ func apply_knockback(force: Vector2) -> void:
 var equipped_spells: Array[Spell] = []
 var equipped_spell: Spell
 
-## 符文緩衝欄位，見 _handle_combo_key()——2026-10-13 起不再被 _process_casting() 呼叫
-## （舊的固定時長吟唱整個刪除，新系統沒有這個概念），目前是孤兒狀態，刻意保留骨架給
-## docs/DEMO_PLAN.md Phase 2 的符文系統重新接上，不要因為「目前沒人呼叫」就誤判成廢棄。
+## === Phase 2（docs/DEMO_PLAN.md §6）：法術圖譜 ===
+## 目前只有一張火系圖譜，這次 Demo 範圍不處理多元素/切換元素（docs/GDD.md §6 待定），
+## 直接 preload，不需要總表/選擇機制。current_node_id 永遠從 current_graph.start_node_id
+## 開始衍生，每次進入專注狀態都重置回起點（不是記住上次停在哪個節點）——跟 combo_buffer/
+## pending_combo 進入時清空是同一個邏輯慣例：專注狀態是一個乾淨的新開始。
+var current_graph: SpellGraph = preload("res://resources/spells/fire/fire_graph.tres")
+var current_node_id: String = ""
+
+signal node_changed(node_id)
+
+## 符文緩衝欄位，見 _handle_rune_key()。前綴比對的對象是 KNOWN_RUNES（全域符文語法表），
+## 不是目前節點的 transitions——玩家在任何節點都該有一致的「要不要繼續等下一鍵」手感，
+## 不會因為某節點不接受某符文就提早打斷輸入；要等打出一個完整合法的符文之後，才去查
+## 目前節點是否真的有這條路，查不到的話，玩家會停在原節點，不影響目前法術依然可以施放
+## （docs/DEMO_PLAN.md §6 這次拍板的設計，§4 原始判定表沒寫清楚「查不到 transition」要
+## 怎麼辦，是這次補上的釐清）。
+## 這次用得到的4種符文（UU/DD/LL/RR，見 docs/FIRE_PROTOTYPE.md §4.1）彼此沒有前綴重疊
+## （長度都2、首字母都不同），has_longer_prefix 分支目前用不到，是刻意保留給之後 R9
+## （上右下左，4鍵序列）用的骨架。
+const KNOWN_RUNES := ["UU", "DD", "LL", "RR"]
+
 const DIR_KEYS := {
 	"move_up": "U",
 	"move_down": "D",
@@ -194,6 +213,8 @@ func _physics_process(delta: float) -> void:
 
 	if is_focused:
 		_process_focused(delta)
+		if Input.is_action_just_pressed("cast_spell"):
+			_cast_current_node()
 		_update_sprite_animation()
 		_update_sprite_tint(delta)
 		return
@@ -283,24 +304,65 @@ func _process_movement() -> void:
 	velocity = GroundProjection.projected_velocity(dir.normalized(), SPEED) * speed_multiplier * (1.0 + speed_boost_mult)
 	move_and_slide()
 
-## 右鍵切換進出專注狀態（docs/DEMO_PLAN.md Phase 1）。進入時清空符文緩衝/中斷衝刺跟蓄力——
-## 專注狀態是一個乾淨的新開始，不會帶著「剛好按到一半的蓄力」或「上一輪殘留的符文輸入」進來。
-## 退出時 Engine.time_scale 恢復正常；這個 phase 退出不會觸發任何法術效果（符文/圖譜還不存在，
-## Phase 2 開工前要先跟使用者確認「手動退出算不算施放」，見 docs/DEMO_PLAN.md §8）。
+## 右鍵切換進出專注狀態（docs/DEMO_PLAN.md Phase 1）。
 func _toggle_focus() -> void:
-	is_focused = not is_focused
-	Engine.time_scale = FOCUS_TIME_SCALE if is_focused else 1.0
 	if is_focused:
-		is_dashing = false
-		is_charging = false
-		combo_buffer = ""
-		pending_combo = ""
+		_exit_focus()
+	else:
+		_enter_focus()
 
-## 這個 phase 只做「WASD 不會移動角色」這個骨架（符文輸入判定是 Phase 2 的事），
-## 角色站在原地播待機動畫，見 _update_sprite_animation()。
-func _process_focused(_delta: float) -> void:
+## 進入時清空符文緩衝/中斷衝刺跟蓄力——專注狀態是一個乾淨的新開始，不會帶著「剛好按到
+## 一半的蓄力」或「上一輪殘留的符文輸入」進來。current_node_id 永遠重置回圖譜起點
+## （docs/DEMO_PLAN.md §6，見欄位宣告處的註解），不是沿用上次退出時停在哪個節點。
+func _enter_focus() -> void:
+	is_focused = true
+	Engine.time_scale = FOCUS_TIME_SCALE
+	is_dashing = false
+	is_charging = false
+	combo_buffer = ""
+	pending_combo = ""
+	current_node_id = current_graph.start_node_id
+	node_changed.emit(current_node_id)
+
+## 手動退出（右鍵再按一次）：Engine.time_scale 恢復正常，不觸發任何法術效果——「手動退出時
+## 尚未施放的法術如何處理」是 docs/GDD.md §12 列的待定項，Phase 4 開工前才需要跟使用者
+## 確認（docs/DEMO_PLAN.md §8），這裡先維持「不施放，單純退出」的行為。施放後退出走
+## _cast_current_node() 自己呼叫這個函式，不是透過這條手動路徑。
+func _exit_focus() -> void:
+	is_focused = false
+	Engine.time_scale = 1.0
+
+## WASD 在專注狀態下不移動角色，改讀成符文輸入（_handle_rune_key()）；每個 frame 檢查
+## pending_combo 的超時處理，跟舊系統 _process_casting() 的邏輯對稱，只是查表對象換了，
+## 見 KNOWN_RUNES 欄位宣告處的註解。
+func _process_focused(delta: float) -> void:
 	velocity = Vector2.ZERO
 	move_and_slide()
+
+	if combo_buffer.length() > 0:
+		var elapsed := Time.get_ticks_msec() / 1000.0 - combo_last_input_time
+		if pending_combo != "" and elapsed >= COMBO_MAX_GAP:
+			_commit_rune(pending_combo)
+		elif pending_combo == "" and elapsed > COMBO_MAX_GAP:
+			_fail_combo()
+
+	for action in DIR_KEYS.keys():
+		if Input.is_action_just_pressed(action):
+			_handle_rune_key(DIR_KEYS[action])
+
+## 專注狀態下左鍵＝立即施放目前節點對應的法術並退出專注（docs/FIRE_PROTOTYPE.md §3：
+## 「施法後退出專注，恢復正常時間」）。任何有效節點都可以是施法終點，不需要先抵達葉節點
+## （docs/GDD.md §5.3）。
+func _cast_current_node() -> void:
+	var node: SpellGraphNode = current_graph.get_node_by_id(current_node_id)
+	if node == null or node.spell == null or node.spell.delivery == null:
+		return
+	var stats := _base_stats(node.spell)
+	var dir := (get_global_mouse_position() - global_position).normalized()
+	node.spell.delivery.fire(self, dir, stats, node.spell.max_range, node.spell.base_effects)
+	facing_direction = _direction_name(dir)
+	sprite_animator.play_one_shot("cast_release_attack")
+	_exit_focus()
 
 ## 近戰三連段的單次判定：朝滑鼠方向、距離+夾角判定（不靠物理形狀，複用舊 boss 吸引懲罰用過的
 ## 手法）命中 MELEE_RANGE 內、朝向 MELEE_HALF_ANGLE 夾角內的所有 "enemies" 群組成員。
@@ -383,10 +445,10 @@ func _update_sprite_tint(delta: float) -> void:
 	else:
 		sprite_animator.modulate = Color(1, 1, 1)
 
-## 2026-10-13：這個函式目前沒有任何呼叫點（舊的 _process_casting() 已經整個移除），刻意
-## 保留骨架給 docs/DEMO_PLAN.md Phase 2 的符文系統接上——屆時會從 _process_focused() 呼叫，
-## 「WASD 在專注狀態下讀成方向鍵輸入」這件事在這個 phase 還沒實作（明確排除項目）。
-func _handle_combo_key(key: String) -> void:
+## 符文輸入判定：前綴比對永遠查全域的 KNOWN_RUNES，跟目前節點無關（見該常數宣告處的
+## 註解）——這樣「要不要繼續等下一鍵」在所有節點手感一致，只有打出完整符文之後，才在
+## _commit_rune() 裡去查目前節點是否真的有這條路。
+func _handle_rune_key(key: String) -> void:
 	var now := Time.get_ticks_msec() / 1000.0
 
 	if combo_buffer.length() > 0:
@@ -398,20 +460,15 @@ func _handle_combo_key(key: String) -> void:
 	combo_last_input_time = now
 	var attempt := combo_buffer + key
 
-	## 2026-10-13：原本查的 GameState.ARCANE_FEATS（超魔專長表）跟著舊戰鬥系統一起刪除了，
-	## 這裡的前綴比對骨架（is_exact/has_longer_prefix 判斷）刻意保留——之後符文系統要用
-	## 幾乎一樣的邏輯，只是查表對象會換成目前節點的合法符文表，先占著位置，不是忘了接資料。
-	## 現在永遠查不到任何序列，_handle_combo_key() 的輸入一律會落到 _fail_combo()。
-	const _PLACEHOLDER_SEQUENCES := {}
-	var is_exact: bool = _PLACEHOLDER_SEQUENCES.has(attempt)
+	var is_exact: bool = attempt in KNOWN_RUNES
 	var has_longer_prefix := false
-	for combo in _PLACEHOLDER_SEQUENCES.keys():
-		if combo.length() > attempt.length() and combo.begins_with(attempt):
+	for rune in KNOWN_RUNES:
+		if rune.length() > attempt.length() and rune.begins_with(attempt):
 			has_longer_prefix = true
 			break
 
 	if is_exact and not has_longer_prefix:
-		_commit_combo(attempt)
+		_commit_rune(attempt)
 		return
 
 	if is_exact and has_longer_prefix:
@@ -426,22 +483,28 @@ func _handle_combo_key(key: String) -> void:
 
 	_fail_combo()
 
-## 2026-10-13：原本這裡查 GameState.ARCANE_FEATS 拿到 feat 字典、疊加 accumulated_feats／
-## cast_speed_bonus／發 feat_added 訊號，整套超魔專長數值縮放機制跟著舊系統一起刪除了。
-## 只留下「偵測到一組完整合法序列」的收尾動作（成功閃光＋清空緩衝＋特效），等符文系統設計好
-## 再回來接上真正的行為（key_string 目前完全沒被用到，先保留參數給之後用）。
-func _commit_combo(_key_string: String) -> void:
-	success_flash_timer = 0.2
+## 打出一個完整合法的符文之後，才在這裡查目前節點是否真的有這條轉換路徑——查不到的話
+## 玩家停在原節點（不是回到起點，也不是任何懲罰性的狀態），跟輸入錯誤鍵（_fail_combo()）
+## 用同一套視覺回饋，因為對玩家來說兩者都是「這次輸入沒有造成任何改變」，不需要刻意區分
+## 「鍵按錯」跟「鍵對但這招沒有這條路」（docs/DEMO_PLAN.md §6 這次拍板的設計）。
+func _commit_rune(rune: String) -> void:
 	combo_buffer = ""
 	pending_combo = ""
-	MagicFX.spawn_burst(get_tree().current_scene, global_position + Vector2(0, -24), Color.WHITE, 14, 160.0)
+	var node: SpellGraphNode = current_graph.get_node_by_id(current_node_id)
+	if node != null and node.transitions.has(rune):
+		current_node_id = node.transitions[rune]
+		success_flash_timer = 0.2
+		node_changed.emit(current_node_id)
+		MagicFX.spawn_burst(get_tree().current_scene, global_position + Vector2(0, -24), Color.WHITE, 14, 160.0)
+	else:
+		_fail_combo()
 
-## 給 scripts/SpellTestRange.gd 用的測試捷徑：跳過即時方向鍵輸入判定，直接視同一組合法序列
-## 已經在這次吟唱中被觸發。
-func debug_force_feat(key_string: String) -> void:
-	_commit_combo(key_string)
+## 給 scripts/SpellTestRange.gd 用的測試捷徑：跳過即時方向鍵輸入判定，直接視同一組合法符文
+## 已經在這次吟唱中被觸發（也是 headless 環境下驗證圖譜轉換唯一能用的方式——headless 無法
+## 模擬真實鍵盤輸入時序）。
+func debug_force_rune(rune: String) -> void:
+	_commit_rune(rune)
 
-## 2026-10-13：原本的超魔專長數值縮放（_apply_scaling_feats()）跟著舊系統一起刪除了，
 func _fail_combo() -> void:
 	combo_buffer = ""
 	pending_combo = ""

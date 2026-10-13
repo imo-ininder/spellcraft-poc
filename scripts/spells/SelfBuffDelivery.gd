@@ -9,16 +9,7 @@ extends SpellDelivery
 ## 兩把 buff 法術（隱形術/速度提升）已刪除，目前沒有任何法術資源使用這個 delivery，INSTANT
 ## 分支純粹是介面完整性，不是已驗證的用例——docs/FIRE_PROTOTYPE.md 的「火焰護盾」節點規劃
 ## 會是下一個用到這個 delivery 的法術。
-## 法術迴響（echo）：等 ECHO_DELAY 秒後再安裝一次同樣的 buff——DURATION 類效果再次命中時
-## 是「刷新剩餘時間」不是疊加兩份倒數（見 Player.add_buff()），所以迴響在這裡的實際效果等同
-## 延後 ECHO_DELAY 秒把倒數重新刷滿，不是讓 buff 強度變兩倍。
-func fire(caster: Node2D, _direction: Vector2, stats: Dictionary, _max_range: float, effects: Array = [], echo: bool = false) -> void:
-	_resolve(caster, stats, effects)
-	if echo:
-		await caster.get_tree().create_timer(ECHO_DELAY).timeout
-		_resolve(caster, stats, effects)
-
-func _resolve(caster: Node2D, stats: Dictionary, effects: Array) -> void:
+func fire(caster: Node2D, _direction: Vector2, stats: Dictionary, _max_range: float, effects: Array = []) -> void:
 	for effect in effects:
 		if effect.apply_mode == SpellEffect.ApplyMode.DURATION:
 			caster.add_buff(effect)

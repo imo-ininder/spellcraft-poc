@@ -12,8 +12,7 @@ extends SpellDelivery
 ## 還在飛的那幾發會各自在 HomingMissile.gd 裡自動找範圍內下一個最近的敵人繼續追，不會對著
 ## 空氣飛，細節見 HomingMissile.gd 開頭註解。
 ##
-## fire() 是非同步的（await 發射間隔），Player._fire_spell() 不會等它，見 AoETargetingDelivery.gd
-## 同樣的呼叫慣例。
+## fire() 是非同步的（await 發射間隔），呼叫端不會等它，見 AoETargetingDelivery.gd 同樣的呼叫慣例。
 
 @export var missile_scene: PackedScene
 @export var impact: ProjectileImpact
@@ -22,21 +21,12 @@ extends SpellDelivery
 @export var turn_rate: float = 5.0 # 徑度/秒，飛彈最大轉向速率，決定弧線彎曲的急緩
 @export var launch_interval: float = 0.12 # 每發飛彈之間的發射間隔
 
-## 法術迴響（echo）：整串 missile_count 發飛完才等 ECHO_DELAY 秒，再整串重發一次——重新呼叫
-## _pick_target()（不是沿用第一輪鎖定的目標），第一輪的目標如果中途死亡，迴響那一輪可以重新
-## 鎖定場上還活著的敵人，不會對著空氣發射。
-func fire(caster: Node2D, _direction: Vector2, stats: Dictionary, max_range: float, _effects: Array = [], echo: bool = false) -> void:
-	await _fire_volley(caster, stats.damage, max_range)
-	if echo:
-		await caster.get_tree().create_timer(ECHO_DELAY).timeout
-		await _fire_volley(caster, stats.damage, max_range)
-
-func _fire_volley(caster: Node2D, damage: float, max_range: float) -> void:
+func fire(caster: Node2D, _direction: Vector2, stats: Dictionary, max_range: float, _effects: Array = []) -> void:
 	var target := _pick_target(caster, max_range)
 	if target == null:
 		return
 	for i in range(missile_count):
-		_launch_missile(caster, target, damage, max_range)
+		_launch_missile(caster, target, stats.damage, max_range)
 		if i < missile_count - 1:
 			await caster.get_tree().create_timer(launch_interval).timeout
 
@@ -59,14 +49,3 @@ func _launch_missile(caster: Node2D, target: Node2D, damage: float, max_range: f
 	missile.global_position = caster.global_position
 	var launch_direction: Vector2 = (target.global_position - caster.global_position).normalized()
 	missile.setup(launch_direction, damage, max_range, missile_speed, impact, target, turn_rate)
-
-## 法術強效：floor 無條件捨去，跟 DamageEffect.scale_potency() 同一條規則。下限夾在 1，
-## 不能讓 missile_count 被縮到 0（倍率 < 1 目前沒有來源會發生，但邏輯上要防呆）。
-func scale_count(mult: float) -> void:
-	missile_count = maxi(1, int(floor(missile_count * mult)))
-
-func has_scalable_count() -> bool:
-	return true
-
-func get_count() -> int:
-	return missile_count

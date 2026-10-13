@@ -5,6 +5,7 @@
 [ext_resource type="PackedScene" path="res://scenes/entities/TestDummy.tscn" id="3"]
 [ext_resource type="Script" uid="uid://1xhordkt2tl8" path="res://scripts/core/TestRangeFloor.gd" id="4"]
 [ext_resource type="PackedScene" path="res://scenes/ui/CastBar.tscn" id="6"]
+[ext_resource type="PackedScene" path="res://scenes/ui/FocusHUD.tscn" id="7"]
 
 [node name="SpellTestRange" type="Node2D" unique_id=1065966208]
 script = ExtResource("1")
@@ -27,6 +28,10 @@ offset_left = 400.0
 offset_top = 650.0
 offset_right = 880.0
 offset_bottom = 680.0
+
+[node name="FocusHUD" parent="UI" unique_id=595409804 instance=ExtResource("7")]
+layout_mode = 3
+anchors_preset = 0
 
 [node name="DebugBg" type="ColorRect" parent="UI" unique_id=824609980]
 visible = false

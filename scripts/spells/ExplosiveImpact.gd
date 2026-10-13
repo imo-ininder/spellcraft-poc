@@ -12,12 +12,3 @@ func resolve(projectile: Node, body: Node) -> bool:
 	MagicFX.spawn_burst(projectile.get_parent(), point, Color(1, 0.5, 0.1), 28, 260.0)
 	MagicFX.spawn_explosion_ring(projectile.get_parent(), point, radius, Color(1, 0.35, 0.1))
 	return true
-
-func scale_radius(mult: float) -> void:
-	radius *= mult
-
-func has_scalable_radius() -> bool:
-	return true
-
-func get_radius() -> float:
-	return radius

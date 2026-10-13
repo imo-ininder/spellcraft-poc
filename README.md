@@ -31,12 +31,14 @@ scenes/
   SpellTestRange.tscn   唯一場景（test arena），也是 run/main_scene
   entities/        角色、怪物場景（Player、TestDummy）
   spells/          投射物等法術相關場景
-  ui/              CastBar／HealthOrb／DeathScreen
+  ui/              CastBar／HealthOrb／DeathScreen／FocusHUD
 scripts/
   SpellTestRange.gd
   core/            場地/環境邏輯（GroundProjection、TestRangeFloor；Arena.gd 目前是孤兒腳本，見 SYSTEMS.md）
   entities/        角色邏輯（Player、PlayerSpriteAnimator、TestDummy）
-  spells/          Spell/SpellDelivery/SpellEffect/ProjectileImpact 架構，見 docs/SPELL_SYSTEM.md
-  ui/              CastBar、HealthOrb、DeathScreen、AoETargetingReticle（目前沒有法術在用）
+  spells/          Spell/SpellDelivery/SpellEffect/ProjectileImpact 架構 + SpellGraphNode/SpellGraph（法術圖譜），見 docs/SPELL_SYSTEM.md
+  ui/              CastBar、HealthOrb、DeathScreen、FocusHUD、AoETargetingReticle（目前沒有法術在用）
   fx/              共用特效工具（MagicFX）
+
+resources/spells/fire/   火系法術圖譜資源（fire_graph.tres + 7 個節點 .tres，目前共用一個佔位 Spell）
 ```

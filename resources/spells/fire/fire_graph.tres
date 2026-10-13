@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="SpellGraph" load_steps=10 format=3]
+
+[ext_resource type="Script" path="res://scripts/spells/SpellGraph.gd" id="1_graph"]
+[ext_resource type="Script" path="res://scripts/spells/SpellGraphNode.gd" id="2_nodetype"]
+[ext_resource type="Resource" path="res://resources/spells/fire/node_basic.tres" id="3_basic"]
+[ext_resource type="Resource" path="res://resources/spells/fire/node_fire_rain.tres" id="4_rain"]
+[ext_resource type="Resource" path="res://resources/spells/fire/node_fire_shield.tres" id="5_shield"]
+[ext_resource type="Resource" path="res://resources/spells/fire/node_fire_arrow.tres" id="6_arrow"]
+[ext_resource type="Resource" path="res://resources/spells/fire/node_fire_ground.tres" id="7_ground"]
+[ext_resource type="Resource" path="res://resources/spells/fire/node_fire_retreat.tres" id="8_retreat"]
+[ext_resource type="Resource" path="res://resources/spells/fire/node_fire_wall.tres" id="9_wall"]
+
+[resource]
+script = ExtResource("1_graph")
+start_node_id = "basic"
+nodes = Array[ExtResource("2_nodetype")]([ExtResource("3_basic"), ExtResource("4_rain"), ExtResource("5_shield"), ExtResource("6_arrow"), ExtResource("7_ground"), ExtResource("8_retreat"), ExtResource("9_wall")])

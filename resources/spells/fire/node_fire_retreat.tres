@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="SpellGraphNode" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/spells/SpellGraphNode.gd" id="1_node"]
+[ext_resource type="Resource" path="res://resources/spells/fire/placeholder_basic.tres" id="2_spell"]
+
+[resource]
+script = ExtResource("1_node")
+id = "fire_retreat"
+spell = ExtResource("2_spell")
+transitions = {}

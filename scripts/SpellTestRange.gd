@@ -1,17 +1,18 @@
 extends Node2D
 
-## 法術測試場（test arena）。這個場景現在是 Floor/TestDummy/Player 的骨架＋F3 除錯面板，
-## 等 docs/DEMO_PLAN.md Phase 2 的符文圖譜/專注值系統有實際內容後再回來補新的面板
-## （FocusHUD，見該文件 §6）。
+## 法術測試場（test arena）。這個場景現在是 Floor/TestDummy/Player 的骨架＋FocusHUD＋F3 除錯面板。
 ##
 ## 2026-10-13（Phase 1）：拔掉 CastBar 的綁定——CastBar.gd 顯示的是「固定時長吟唱讀條」，
 ## 新戰鬥系統沒有這個概念了（一般狀態的近戰/蓄力火球是瞬間判定，專注狀態的符文施法是按下
 ## 就立即觸發，都沒有「吟唱中」這段期間可以顯示進度）。CastBar.gd／CastBar.tscn 檔案本身
 ## 沒有刪，只是這個場景不再掛它；UI/CastBar 節點還留在 .tscn 裡（沒人綁定，永遠不可見，
 ## 無害）。
+##
+## Phase 2：新增 FocusHUD 綁定，跟 bind(player) 既有慣例一致。
 
 @onready var player: CharacterBody2D = $Player
 @onready var test_dummy: StaticBody2D = $TestDummy
+@onready var focus_hud: FocusHUD = $UI/FocusHUD
 @onready var debug_bg: ColorRect = $UI/DebugBg
 @onready var debug_label: Label = $UI/DebugLabel
 
@@ -21,6 +22,7 @@ var debug_visible := false
 var _f3_was_pressed := false
 
 func _ready() -> void:
+	focus_hud.bind(player)
 	debug_bg.visible = false
 	debug_label.visible = false
 
@@ -37,8 +39,10 @@ func _process(_delta: float) -> void:
 func _build_debug_text() -> String:
 	var lines: Array[String] = ["[F3] 除錯面板", ""]
 
-	lines.append("--- 測試狀態（docs/DEMO_PLAN.md Phase 1）---")
+	lines.append("--- 測試狀態（docs/DEMO_PLAN.md Phase 1/2）---")
 	lines.append("is_focused: %s" % player.is_focused)
+	lines.append("current_node_id: %s" % player.current_node_id)
+	lines.append("combo_buffer: '%s'" % player.combo_buffer)
 	lines.append("is_charging: %s" % player.is_charging)
 	if player.is_charging:
 		lines.append("charge_timer: %.2fs" % player.charge_timer)

@@ -16,9 +16,13 @@ Spellcraft PoC：法師版「魔物獵人」，純 PVE。Godot 4.6.2，GDScript�
 
 ## 目前進度
 
-**2026-10-13：舊系統大量刪除**（細節見 `docs/DEMO_PLAN.md` §0/§3「現況基礎」）：boss（`scripts/entities/boss/`、`docs/BOSS_DESIGN.md`）、大廳與正式戰鬥場景（`scenes/Lobby.tscn`／`scenes/Main.tscn` 及其專屬 UI）、`GameState.gd`（法術總表/超魔專長表/裝備清單）、舊的 6 個法術 `.tres` 全部移除。**唯一場景現在是 `scenes/SpellTestRange.tscn`**（也是 `project.godot` 的 `run/main_scene`），`Player.gd`／`scripts/SpellTestRange.gd` 做了最小修補讓專案能編譯——左鍵/右鍵目前什麼都不會發生（沒有法術可裝備），這是過渡期的刻意狀態。
+**2026-10-13：Phase 0（舊系統清理）、Phase 1（核心操作骨架）、Phase 2（符文輸入+法術圖譜+基本UI）都已完成**，細節/實作記錄見 `docs/DEMO_PLAN.md` §0/§5/§6。目前場景仍然只有 `scenes/SpellTestRange.tscn`（`run/main_scene`）。
 
-**跟戰鬥系統設計無關、完全不受這次轉型影響的部分**：基礎 Dash、HP/死亡系統（`Player.gd` 的 `hp`/`MAX_HP`/`take_damage()`；左下角液體填充圓球 UI `scripts/ui/HealthOrb.gd`；死亡畫面 `scripts/ui/DeathScreen.gd`）、玩家角色美術（AI 生成 sprite sheet，`scripts/entities/PlayerSpriteAnimator.gd`，細節見 `docs/ROADMAP.md` §2.1a）、`GroundProjection`/`MagicFX` 等視覺工具。**接下來要做**：照 `docs/DEMO_PLAN.md` 的 Phase 1 開始（核心操作骨架：近戰三連段/蓄力火球/專注模式進出殼），不要跳著做後面的 phase。
+已經能動的東西：移動、近戰三連段、蓄力火球、右鍵進出專注狀態（子彈時間）、專注狀態下用 WASD 打符文（`UU`/`DD`/`LL`/`RR`）沿 `resources/spells/fire/fire_graph.tres` 這張圖切換 `Player.current_node_id`，左鍵在專注狀態下施放目前節點並退出。`scripts/ui/FocusHUD.gd`／`scenes/ui/FocusHUD.tscn` 顯示目前節點名稱＋符文成功/失敗回饋。**圖譜 7 個節點目前全部共用同一個佔位 `Spell`**（`resources/spells/fire/placeholder_basic.tres`，`ProjectileDelivery`+`ExplosiveImpact`）——這個 phase 驗證的是圖譜拓撲/符文判定，不是法術效果本身，7 把法術各自的真正差異化效果是 Phase 3/6 的事。
+
+Phase 2 落地時順手清掉了舊「超魔專長數值縮放」系統的殘留介面（`scale_potency`/`scale_radius`/`scale_count`/`maximize`/`has_scalable_*`/`get_radius`/`get_count`/`describe_potency`、`fire()` 的 `echo` 參數），這些掛在 `SpellDelivery`/`SpellEffect`/`ProjectileImpact` 上但零呼叫端，新圖譜設計不會用到，使用者 review 時明確授權一併移除——如果看到舊文件還提到這些方法，那是沒跟著更新的歷史殘留，不是還在用。
+
+**跟戰鬥系統設計無關、完全不受這次轉型影響的部分**：基礎 Dash、HP/死亡系統（`Player.gd` 的 `hp`/`MAX_HP`/`take_damage()`；左下角液體填充圓球 UI `scripts/ui/HealthOrb.gd`；死亡畫面 `scripts/ui/DeathScreen.gd`）、玩家角色美術（AI 生成 sprite sheet，`scripts/entities/PlayerSpriteAnimator.gd`，細節見 `docs/ROADMAP.md` §2.1a）、`GroundProjection`/`MagicFX` 等視覺工具。**接下來要做**：照 `docs/DEMO_PLAN.md` 的 Phase 3 開始（火系法術4個核心節點真正有差異化效果），不要跳著做後面的 phase。
 
 ## 架構規則
 
@@ -30,6 +34,10 @@ Spellcraft PoC：法師版「魔物獵人」，純 PVE。Godot 4.6.2，GDScript�
 6. **判斷「該不該共用程式碼」要看這段邏輯會不會被持續調整，不是只看程式碼像不像/場景獨不獨立**：極小、極穩定、幾乎不會再改的工具函式可以各自複製，共用反而徒增間接層。但任何涉及 UI 呈現、使用者會持續要求調整格式/數值/視覺的邏輯（讀條、計時器顯示、HUD 元件...），一開始就要抽成共用場景（`.tscn`＋`class_name` 腳本，暴露簡單 public API），跟 `Player.tscn`/`HomingMissile.tscn` 這種可重用場景同一個模式，不要先複製再說。踩過一次見 `scripts/ui/CastBar.gd`（`Main.gd`〔已刪除〕／`SpellTestRange.gd` 原本各自複製一份讀條邏輯，使用者只要求改一邊就對不上，2026-10-11 記錄，原始記錄在已刪除的 `docs/DESIGN.md` §1.6，教訓已經沒有獨立文件可查，寫在這裡就是完整記錄）——如果已經複製了，之後使用者對其中一份提出調整需求時，要主動意識到「另一份是不是也要跟著改」，不要只改明確點名的那一份就交差。
 
 ## 已知環境雷
+
+- **`.mcp.json`（MCP server 設定，已加進 `.gitignore`，不進版控）如果 `command` 寫的是 `"cmd"`／`args` 第一個是 `"/c"`，那是 Windows 專用的呼叫方式，在 macOS 上會因為找不到 `cmd` 這個指令直接連線失敗（`ENOENT`）。這台機器要直接用 `"command": "npx"`，`args` 不要有 `/c`。改完設定檔後，當前連線不會自動套用，需要使用者手動重新連接一次 editor 的 MCP 才會生效。
+- **MCP 連線跟 headless 流程會互相干擾**：editor 的 MCP 連線正常時，不要再跑 `Godot --headless --import`/`--quit-after` 這類會另外開一個 Godot 處理程序的指令——會跟 editor 那份 MCP registry/port 搶，導致連線變成 `AUTH_FAILED`（`registry entry has no token path`）甚至讓新開的 headless 處理程序卡死不退出。MCP 連線正常時，所有驗證（語法檢查、跑起來測行為、截圖）優先用 `script_check`/`game_start`/`execute_code`/`runtime_get_script_vars`/`runtime_screenshot` 這些 MCP 工具，不要繞回 headless script。
+- `node_get_property`/`node_call_method`/`scene_get_tree` 讀的是 **editor 裡目前開啟的場景（設計時狀態）**，不是真正在跑的 runtime 實例——即使遊戲正在跑，這幾個工具看到的還是 `.tscn` 檔案本身的內容。要讀/改真正在跑的那份，要用 `execute_code`（`channel: "runtime"`，預設值）配 `get_node('/root/場景名/節點路徑')`，或 `runtime_get_script_vars`。
 
 - 新增帶 `class_name` 的腳本後，需要先跑一次 `Godot --headless --import --path .` 讓全域類別註冊，否則會出現 `Identifier "X" not declared` 的假錯誤。
 - `Godot --headless --check-only` 在這個環境裡會卡住不退出，改用 `Godot --headless --quit-after N --path .` 跑幾個 frame 來驗證腳本語法/runtime 錯誤。

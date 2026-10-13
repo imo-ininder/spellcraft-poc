@@ -46,10 +46,12 @@
 介面：
 
 ```gdscript
-func fire(caster: Node2D, direction: Vector2, stats: Dictionary, max_range: float, effects: Array = [], echo: bool = false) -> void
+func fire(caster: Node2D, direction: Vector2, stats: Dictionary, max_range: float, effects: Array = []) -> void
 ```
 
-`stats` 是呼叫端算好的最終數值（目前只有 `damage` 鍵）。`effects` 是 `Spell.base_effects` 的原始陣列（不是攤平後的 `stats`），只有 `SelfBuffDelivery` 會用到。**`echo` 參數目前是功能完整、但呼叫端（`Player.gd`）已經不會傳 `true` 進來的狀態**——舊的「法術迴響」超魔專長會把這個參數設成 `true`，那個專長已經刪除，但每個 delivery 內部處理 echo 的邏輯本身沒有動（§3.3 的 `AoETargetingDelivery` 範例還留著），之後如果新系統需要「重複施放一次」這種節點行為，直接傳 `echo=true` 就能用，不用重寫。
+`stats` 是呼叫端算好的最終數值（目前只有 `damage` 鍵）。`effects` 是 `Spell.base_effects` 的原始陣列（不是攤平後的 `stats`），只有 `SelfBuffDelivery` 會用到。
+
+**2026-10-13（Phase 2）：`echo` 參數跟整套 `scale_potency()`/`scale_radius()`/`scale_count()`/`maximize()`/`has_scalable_*()`/`get_radius()`/`get_count()`/`describe_potency()` 介面已經整個刪除**（原本掛在 `SpellDelivery`/`SpellEffect`/`ProjectileImpact` 跟各子類別上）——這些都是舊「超魔專長數值縮放」系統（`_apply_scaling_feats()`）的配套介面，`_apply_scaling_feats()` 本體已經在轉型時刪除，但這些方法原本沒有跟著清掉，一直是零呼叫端的殘留介面。新的符文圖譜設計（符文navigate 節點，不縮放數值）確認不會用到這套機制，Phase 2 落地時整個移除，不是繼續留著「以後可能用到」。`get_preview_center()` 不受影響，保留著（那是給 `CastPreview.gd` 的範圍預覽用，跟數值縮放是不同關注點，見 §3.3）。
 
 ### 3.1 `ProjectileDelivery`
 直線投射物，固定方向飛行。`@export var projectile_scene: PackedScene`、`impact: ProjectileImpact`（命中/飛行耗盡後行為，見第5節）、`travel_time: float = 0.1`（法術固定要在這麼多秒內飛完 `max_range`，速度反推出來）、`fixed_speed: float = 0.0`（>0 時優先於 `travel_time`，直接當固定飛行速度，不受 `max_range` 影響——給會反彈、`max_range` 代表總路徑長度而非終點距離的法術用）、`bounces_off_walls: bool = false`（碰到場地邊界是否反彈）、`count: int = 1`／`launch_interval: float = 0.08`（`count > 1` 時朝同一方向依序射出）。
@@ -72,7 +74,7 @@ func fire(caster: Node2D, direction: Vector2, stats: Dictionary, max_range: floa
 效果直接套用在施法者自己身上，無命中判定：
 
 ```gdscript
-func fire(caster, _direction, stats, _max_range, effects := [], _echo := false) -> void:
+func fire(caster, _direction, stats, _max_range, effects := []) -> void:
 	for effect in effects:
 		if effect.apply_mode == SpellEffect.ApplyMode.DURATION:
 			caster.add_buff(effect)
@@ -141,7 +143,35 @@ func resolve(projectile: Node, body: Node) -> bool
 
 ---
 
-## 6. Buff 系統（`Player.gd`）
+## 6. 法術圖譜（`SpellGraphNode`/`SpellGraph`，2026-10-13 Phase 2 落地）
+
+`docs/DEMO_PLAN.md` §4 規劃的資料結構，`scripts/spells/` 底下跟 `Spell.gd` 同一層：
+
+```gdscript
+# SpellGraphNode.gd
+@export var id: String
+@export var spell: Spell
+@export var transitions: Dictionary[String, String] = {}   # 符文 -> 下一個節點的 id
+
+# SpellGraph.gd
+@export var start_node_id: String
+@export var nodes: Array[SpellGraphNode] = []
+func get_node_by_id(id: String) -> SpellGraphNode   # 線性搜尋，節點數量不多，不需要優化成查表
+```
+
+一個節點就是一把完整可施放的法術（直接複用既有 `Spell`，`cast_time`/`slot_cost` 這兩個舊系統欄位不用填），同時可能是其他節點的轉換起點。`transitions` 本質是有向圖的邊，**沒有任何機制禁止同一張圖出現環或回頭路**——`docs/GDD.md` §5.3 提到的「反向路徑」如果之後要加，直接在某個節點的 `transitions` 裡補一條指回之前節點 id 的符文即可，資料結構層級已經支援，不需要改程式碼。目前唯一一張圖（`resources/spells/fire/fire_graph.tres`）照 `docs/FIRE_PROTOTYPE.md` §5.3 的拓撲建，7 個節點全部共用一個佔位 `Spell`（`placeholder_basic.tres`），這個 phase 只驗證圖譜拓撲/符文判定，不是法術效果本身。
+
+### 6.1 符文判定：查表對象是全域語法表，不是目前節點
+
+`Player.gd` 的 `_handle_rune_key()`（複用舊符文系統 `_handle_combo_key()` 的前綴比對骨架）判斷「要不要繼續等下一鍵」時，查的是全域常數 `KNOWN_RUNES`（目前 `["UU","DD","LL","RR"]`），跟目前節點完全無關——這樣玩家在任何節點打符文的「等待手感」都一致，不會因為某節點不接受某符文就提早中斷輸入。只有打出一個完整合法的符文之後，才在 `_commit_rune()` 裡去查目前節點的 `transitions` 有沒有這條路。
+
+**查不到的話，玩家停留在原節點，不是任何懲罰性狀態，也不影響當下能不能施放**——這是 `docs/DEMO_PLAN.md` §4.1 原始判定表沒寫清楚的分支（只寫了「查到就換節點」，沒寫「查不到」），Phase 2 落地時補上的釐清。視覺回饋跟「按錯鍵」共用同一套（`_fail_combo()`），因為對玩家來說兩者都是「這次輸入沒有造成任何改變」，不需要刻意區分。
+
+`current_node_id` 每次進入專注狀態（`_enter_focus()`）都重置回 `current_graph.start_node_id`，不會沿用上次退出時停在哪個節點——跟 `combo_buffer`/`pending_combo` 進入時清空是同一個邏輯慣例。
+
+---
+
+## 7. Buff 系統（`Player.gd`）
 
 ```gdscript
 var active_buffs: Array = []   # [{effect: SpellEffect, timer: float}]
@@ -157,7 +187,7 @@ func _process_buffs(delta: float) -> void    # 每個 _physics_process() 呼叫�
 
 ---
 
-## 7. GDScript 語言限制
+## 8. GDScript 語言限制
 
 `_init()` 裡直接賦值**繼承自父類別**的 `@export` 欄位會編譯失敗（`Identifier not found`），必須加 `self.` 明確限定：
 
