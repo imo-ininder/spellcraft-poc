@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="FireRainSpell" format=3]
+
+[ext_resource type="Script" path="res://scripts/spells/FireRainSpell.gd" id="1_spell"]
+
+[resource]
+script = ExtResource("1_spell")
+id = "fire_rain"
+display_name = "火雨術"
+description = "在滑鼠瞄準的區域降下火雨，持續一段時間，範圍內每隔固定頻率就是一次真正的擊中（會閃白/彈一下，跟被投射物打到一樣），不是安靜的 DOT（docs/FIRE_PROTOTYPE.md §6.2）。"
+placement_range = 450.0
+damage_per_tick = 6.0
+tick_interval = 0.6
+duration = 3.0
+radius = 90.0
+damage_mode = 0
+rain_spawn_interval = 0.12

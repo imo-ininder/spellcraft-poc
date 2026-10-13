@@ -14,13 +14,22 @@ func _ready() -> void:
 	queue_redraw() # 陰影是靜態的，只需要畫一次，不用每幀呼叫
 
 const SPEED := 130.0 # 原本260，使用者嫌跟boss都太快，砍半
-const COMBO_MAX_GAP := 0.15
+## 2026-10-13：0.15 太短，使用者實測覺得符文輸入視窗抓太緊，拉長到 0.35（demo 階段示範值，
+## 還可以再調）。
+const COMBO_MAX_GAP := 0.35
 ## Dash 是短時間內的高速衝刺，不是瞬移（Blink）——用 move_and_slide() 讓它跟一般移動一樣貼牆滑行，
-## 不是 move_and_collide() 那種單次跳到終點。DASH_SPEED*DASH_DURATION ＝ 總衝刺距離（2026-10-12
-## 使用者要求從原本約220px改成50px，DASH_DURATION維持不變，直接用除法算出對應的速度，數值本身
-## 就是「50px」這個意圖，不是另外存一個容易跟DASH_DURATION改動脫鉤的獨立常數）。
+## 不是 move_and_collide() 那種單次跳到終點。DASH_DISTANCE 是設計意圖（原本 220px，2026-10-12
+## 使用者要求改成 50px），DASH_DURATION 維持不變。
+##
+## 2026-10-13：原本直接 `const DASH_SPEED := 50.0/DASH_DURATION`，`velocity = dash_direction
+## * DASH_SPEED`——使用者指出這是系統性問題：純世界座標的 `方向 * 純量`，在壓扁視角（Y軸
+## 壓縮）下往垂直方向衝刺，視覺上移動的距離會比往水平方向衝刺明顯短。改成在 _start_dash()
+## 当下用 GroundProjection.offset_towards(dash_direction, DASH_DISTANCE) 算出「不管往哪個
+## 方向，視覺/判定距離都是 DASH_DISTANCE」的世界座標位移向量，再除以 DASH_DURATION 變成
+## 這次衝刺要用的速度——所以不能再是 const 了（跟方向有關，每次衝刺都要重算一次）。
 const DASH_DURATION := 0.12
-const DASH_SPEED := 50.0 / DASH_DURATION
+const DASH_DISTANCE := 50.0
+var dash_velocity := Vector2.ZERO
 
 ## 空白鍵按下時設 true，實際觸發延到 _physics_process 做（跟其他移動/物理操作在同一個時機點）。
 var dash_requested := false
@@ -50,6 +59,20 @@ var hp := MAX_HP
 var is_dead := false
 signal hp_changed(ratio)
 signal died
+
+## === Phase 6（docs/DEMO_PLAN.md §10）：火焰護盾 ===
+## ShieldSpell.cast() 直接呼叫 start_shield() 寫這兩個欄位，不經過 active_buffs/SpellEffect
+## 那套（那是給「同一時間可能疊加多種不同 buff」設計的，火焰護盾目前是唯一的自身防護類法術，
+## 不需要那層通用性）。take_damage()/take_dot_damage() 都會套用 shield_damage_mult。
+## 「對攻擊自己的敵人造成火焰傷害」（docs/FIRE_PROTOTYPE.md §6.3 提到的反傷效果）這次沒做——
+## take_damage() 目前不知道攻擊者是誰，要做反傷得幫近戰/兩種投射物/DamageZone 全部呼叫點加上
+## 攻擊者參數，範圍超出這次，使用者 review 規劃時同意先跳過，只做減傷。
+var shield_timer := 0.0
+var shield_damage_mult := 1.0
+
+func start_shield(duration: float, damage_mult: float) -> void:
+	shield_timer = duration
+	shield_damage_mult = damage_mult
 
 ## === DURATION 類 buff（SpellEffect.gd 的 on_start()/on_expire()，SPELL_SYSTEM.md §2.2）===
 ## active_buffs：[{effect: SpellEffect, timer: float}]，倒數狀態存在這裡（角色節點身上），
@@ -113,6 +136,34 @@ var knockback_velocity := Vector2.ZERO
 func apply_knockback(force: Vector2) -> void:
 	knockback_velocity += force
 
+## === Phase 6（docs/DEMO_PLAN.md §10）：火焰撤離專用位移 ===
+## 2026-10-13：使用者明確要求不要重用 apply_knockback()（力道+摩擦力衰減）或 Dash，即使
+## 「短暫位移＋move_and_slide() 貼牆滑行」看起來很像——這個專案這階段已經講過好幾次，每把
+## 法術的運行邏輯該各自獨立，不要因為形狀相似就借用別的系統，所以這裡是完全獨立的一組
+## 狀態/計時器，固定速度（不是力道衰減），時間到準確停在目標距離。
+var is_retreating := false
+var retreat_timer := 0.0
+var retreat_velocity := Vector2.ZERO
+const RETREAT_DURATION := 0.18
+
+## distance 是「投影後／視覺上看起來的距離」，不是世界座標位移量——2026-10-13 系統性修正：
+## 原本直接 `direction.normalized() * (distance/RETREAT_DURATION)`，往垂直方向撤離時實際
+## 移動的視覺距離會比水平方向短（壓扁視角，見 GroundProjection.offset_towards() 註解）。
+## 呼叫端（FireRetreatSpell.cast()）算身後軌跡位置/長度時也要用同一個函式重算一次世界座標
+## 位移量，不能假設跟這裡用的是同一份（兩邊各自呼叫純函式，結果保證一致，不是共用一份狀態）。
+func start_retreat(direction: Vector2, distance: float) -> void:
+	is_retreating = true
+	retreat_timer = RETREAT_DURATION
+	retreat_velocity = GroundProjection.offset_towards(direction, distance) / RETREAT_DURATION
+
+func _process_retreat(delta: float) -> void:
+	retreat_timer -= delta
+	velocity = retreat_velocity
+	move_and_slide()
+	if retreat_timer <= 0.0:
+		is_retreating = false
+		velocity = Vector2.ZERO
+
 ## 目前裝備的法術。2026-10-13：舊的大廳裝備流程（GameState.equipped_spells）跟輪盤切換
 ## 系統一起刪除了，這兩個欄位現在沒有任何地方會填值——下面吟唱相關函式都已經補上 null
 ## 檢查，左鍵/右鍵現在暫時什麼都不會發生，這是過渡期的刻意狀態（見 docs/GDD.md）。
@@ -159,11 +210,29 @@ var hazard_flash_timer := 0.0
 signal combo_failed
 
 ## === Phase 1（docs/DEMO_PLAN.md §5）：專注狀態殼 ===
-## 右鍵（instant_cast action）切換進出，世界時間跟著縮放（子彈時間，不是真的暫停——
-## 數值沿用舊法術輪盤用過的 0.25，見 docs/SYSTEMS.md）。這個 phase 只做「能不能順暢進出、
-## 時間縮放手感如何」，專注狀態下 WASD 不會移動角色，但還不會真的拿來輸入符文（Phase 2）。
+## 右鍵（instant_cast action）2026-10-13 四次修正：改回開關式（按一下進、再按一下取消），
+## 不是按住/放開——使用者實測按住的手感「蠻彆扭」。完整邏輯：
+## 1. 左鍵蓄力到 CHARGE_THRESHOLD（「可以放出 basic 法術」的那一刻）之後，右鍵才有效。
+## 2. 按右鍵（press）進入專注狀態，世界時間跟著縮放（子彈時間，不是真的暫停——數值沿用舊
+##    法術輪盤用過的 0.25，見 docs/SYSTEMS.md）。
+## 3. 專注狀態中 WASD 符文輸入邏輯不變（見 KNOWN_RUNES／_process_focused()）。
+## 4. 專注狀態中再按一次右鍵（press）＝取消，不施放任何法術，直接退出。
+## 5. 只有在左鍵「放開」的那一刻才會施放目前節點的法術，施放完畢專注狀態跟著結束——左鍵從
+##    蓄力開始到這裡必須全程按著沒放開，放開這個動作本身才是出招的觸發點，右鍵全程只負責
+##    開關子彈時間，不負責出招。
 var is_focused := false
 const FOCUS_TIME_SCALE := 0.25
+
+## === Phase 4（docs/DEMO_PLAN.md §8）：專注值資源 ===
+## 進專注持續消耗，離開（不管手動取消還是耗盡）就停止消耗、隨時間回滿。全部是佔位值。
+## 消耗用「真實未縮放的秒數」量測，不是 _physics_process() 收到的 delta（那個已經被
+## Engine.time_scale 縮放過了）——這樣「能撐幾秒」是用現實時間量測，不會因為子彈時間倍率
+## 調整就跟著變長/變短。這點 Fire Prototype 文件沒有明講，是這次補上的設計選擇，覺得不對
+## 可以改成用縮放後的 delta（讓子彈時間越慢，専注撐得越久，是另一種合理設計）。
+const FOCUS_MAX := 5.0
+const FOCUS_DRAIN_PER_SEC := 1.0
+const FOCUS_REGEN_PER_SEC := 1.5
+var focus_value := FOCUS_MAX
 
 ## === Phase 1：普通攻擊三連段 + 蓄力火球（一般狀態下 cast_spell 的行為）===
 ## tap（快按快放）＝近戰一下；按住超過 CHARGE_THRESHOLD 秒才放開＝蓄力火球。近戰判定複用
@@ -185,9 +254,9 @@ var combo_cooldown_timer := 0.0
 var is_charging := false
 var charge_timer := 0.0
 
-## 目前只有基礎 Dash，見 docs/SYSTEMS.md §1——還沒有任何位移類法術，「裝備位移法術時改走
-## AoETargetingDelivery」那條分支留給之後真的有位移法術時再加（docs/FIRE_PROTOTYPE.md 的
-## 「火焰撤離」節點可能會是第一個用到這條分支的法術）。
+## 基礎 Dash 見 docs/SYSTEMS.md §1。火焰撤離（Phase 6）最後沒有走 AoETargetingDelivery 或
+## 重用 Dash，是獨立一套位移（見 start_retreat()/_process_retreat()），這裡原本預留的那條
+## 分支沒有用到，已經拿掉。
 func _input(event: InputEvent) -> void:
 	if is_dead:
 		return
@@ -199,11 +268,26 @@ func _physics_process(delta: float) -> void:
 		return
 	_process_buffs(delta)
 
-	## instant_cast action（右鍵）2026-10-13 起不再是法術瞬發，改成專注狀態的進出開關——
-	## 不管正在做什麼（移動/近戰/蓄力中）都能切換（符合 Fire Prototype §3「右鍵控制專注狀態
-	## 的進入與退出」，沒有排除條件）。
-	if Input.is_action_just_pressed("instant_cast"):
-		_toggle_focus()
+	## 不管正在做什麼（專注/被擊退/撤離中）都照常倒數，不要讓進專注之類的狀態變相延長護盾
+	## 持續時間。
+	if shield_timer > 0.0:
+		shield_timer -= delta
+		if shield_timer <= 0.0:
+			shield_damage_mult = 1.0
+
+	## 開關式右鍵，見上面 is_focused 欄位宣告處的完整邏輯說明。進專注之後 is_charging 被
+	## _enter_focus() 清掉（這份蓄力已經「用掉」），但 Input 的 just_released 判定讀的是
+	## 引擎自己追蹤的按鍵狀態、不是我們自己的 is_charging 變數，所以就算 is_charging 已經
+	## 被清成 false，左鍵真正放開時 is_action_just_released("cast_spell") 還是能正確偵測到。
+	if is_focused:
+		if Input.is_action_just_pressed("instant_cast"):
+			_exit_focus() ## 取消，不施放
+		elif Input.is_action_just_released("cast_spell"):
+			_cast_current_node() ## 施放目前節點，內部會呼叫 _exit_focus() 收尾
+	## Phase 4：除了左鍵蓄力到位，還要 focus_value > 0 才能進——避免剛好耗盡、還沒回一點點
+	## 就馬上又能進去，進去立刻又被下面的耗盡判定強制出招，變成無意義的空轉。
+	elif Input.is_action_just_pressed("instant_cast") and is_charging and charge_timer >= CHARGE_THRESHOLD and focus_value > 0.0:
+		_enter_focus()
 
 	if knockback_velocity.length() > 1.0:
 		_process_knockback(delta)
@@ -211,13 +295,21 @@ func _physics_process(delta: float) -> void:
 		_update_sprite_tint(delta)
 		return
 
-	if is_focused:
-		_process_focused(delta)
-		if Input.is_action_just_pressed("cast_spell"):
-			_cast_current_node()
+	if is_retreating:
+		_process_retreat(delta)
 		_update_sprite_animation()
 		_update_sprite_tint(delta)
 		return
+
+	if is_focused:
+		_process_focused(delta)
+		_process_focus_drain(delta)
+		_update_sprite_animation()
+		_update_sprite_tint(delta)
+		return
+
+	if focus_value < FOCUS_MAX:
+		focus_value = min(FOCUS_MAX, focus_value + FOCUS_REGEN_PER_SEC * delta)
 
 	if dash_requested:
 		dash_requested = false
@@ -264,12 +356,14 @@ func _start_dash() -> void:
 	facing_direction = _direction_name(dash_direction)
 	is_dashing = true
 	dash_timer = DASH_DURATION
+	## 見 DASH_DISTANCE 欄位宣告處註解：方向相關，每次衝刺重算一次，不能是 const。
+	dash_velocity = GroundProjection.offset_towards(dash_direction, DASH_DISTANCE) / DASH_DURATION
 	MagicFX.spawn_burst(get_tree().current_scene, global_position, Color(0.6, 0.8, 1.0), 16, 200.0)
 
 ## 跟一般移動一樣用 move_and_slide()，貼牆會自然滑行、停下，不是瞬間跳到終點（那是 Blink，不是 Dash）。
 func _process_dash(delta: float) -> void:
 	dash_timer -= delta
-	velocity = dash_direction * DASH_SPEED
+	velocity = dash_velocity
 	move_and_slide()
 	if dash_timer <= 0.0:
 		is_dashing = false
@@ -304,13 +398,6 @@ func _process_movement() -> void:
 	velocity = GroundProjection.projected_velocity(dir.normalized(), SPEED) * speed_multiplier * (1.0 + speed_boost_mult)
 	move_and_slide()
 
-## 右鍵切換進出專注狀態（docs/DEMO_PLAN.md Phase 1）。
-func _toggle_focus() -> void:
-	if is_focused:
-		_exit_focus()
-	else:
-		_enter_focus()
-
 ## 進入時清空符文緩衝/中斷衝刺跟蓄力——專注狀態是一個乾淨的新開始，不會帶著「剛好按到
 ## 一半的蓄力」或「上一輪殘留的符文輸入」進來。current_node_id 永遠重置回圖譜起點
 ## （docs/DEMO_PLAN.md §6，見欄位宣告處的註解），不是沿用上次退出時停在哪個節點。
@@ -324,13 +411,27 @@ func _enter_focus() -> void:
 	current_node_id = current_graph.start_node_id
 	node_changed.emit(current_node_id)
 
-## 手動退出（右鍵再按一次）：Engine.time_scale 恢復正常，不觸發任何法術效果——「手動退出時
-## 尚未施放的法術如何處理」是 docs/GDD.md §12 列的待定項，Phase 4 開工前才需要跟使用者
-## 確認（docs/DEMO_PLAN.md §8），這裡先維持「不施放，單純退出」的行為。施放後退出走
-## _cast_current_node() 自己呼叫這個函式，不是透過這條手動路徑。
+## 退出專注的出口，兩條路徑都會走到這裡：① 專注中再按一次右鍵＝取消，不施放任何法術，
+## 直接呼叫這個函式；② 左鍵放開＝施放，_cast_current_node() 施放完目前節點之後呼叫這個
+## 函式收尾。is_charging/charge_timer 其實進專注那一刻就已經被 _enter_focus() 清過一次了，
+## 這裡重置是保險，但也確保「取消」這條路徑不會把蓄力殘留帶回一般狀態（不然取消後左鍵
+## 還握著，之後放開會意外又在一般狀態觸發一次蓄力火球）。
 func _exit_focus() -> void:
 	is_focused = false
 	Engine.time_scale = 1.0
+	is_charging = false
+	charge_timer = 0.0
+
+## 每個 physics frame 在專注狀態下呼叫：把 delta 換算回真實秒數（見 FOCUS_MAX 欄位宣告處的
+## 註解）扣 focus_value，耗盡時強制施放目前節點並退出——跟左鍵放開是同一個出口
+## （_cast_current_node()，內部會呼叫 _exit_focus()），玩家耗盡資源時不會被晾在原地，
+## 一定會有個結果（施放），不是單純被踢出專注狀態。Engine.time_scale 理論上不會是 0（最小
+## 就是 FOCUS_TIME_SCALE=0.25），這裡還是防一下除以 0。
+func _process_focus_drain(delta: float) -> void:
+	var real_delta: float = delta / Engine.time_scale if Engine.time_scale > 0.0 else delta
+	focus_value = max(0.0, focus_value - FOCUS_DRAIN_PER_SEC * real_delta)
+	if focus_value <= 0.0:
+		_cast_current_node()
 
 ## WASD 在專注狀態下不移動角色，改讀成符文輸入（_handle_rune_key()）；每個 frame 檢查
 ## pending_combo 的超時處理，跟舊系統 _process_casting() 的邏輯對稱，只是查表對象換了，
@@ -350,18 +451,20 @@ func _process_focused(delta: float) -> void:
 		if Input.is_action_just_pressed(action):
 			_handle_rune_key(DIR_KEYS[action])
 
-## 專注狀態下左鍵＝立即施放目前節點對應的法術並退出專注（docs/FIRE_PROTOTYPE.md §3：
-## 「施法後退出專注，恢復正常時間」）。任何有效節點都可以是施法終點，不需要先抵達葉節點
-## （docs/GDD.md §5.3）。
+## 左鍵放開＝立即施放目前節點對應的法術並退出專注（docs/FIRE_PROTOTYPE.md §3：
+## 「施法後退出專注，恢復正常時間」）。2026-10-13 四次修正：出招鍵從右鍵改成左鍵——右鍵
+## 現在純粹是開關子彈時間，不負責出招，見 is_focused 欄位宣告處的完整邏輯說明。進專注的
+## 「門票」（左鍵蓄力到 CHARGE_THRESHOLD）在按右鍵那一刻就審過了，這裡不用再檢查一次。
+## 任何有效節點都可以是施法終點，不需要先抵達葉節點（docs/GDD.md §5.3）。_exit_focus()
+## 永遠執行，就算節點沒有可施放的法術（null 檢查）——左鍵放開這個動作本身就是「結束子彈
+## 時間」，不能因為節點沒配法術就卡在專注狀態裡出不來。
 func _cast_current_node() -> void:
 	var node: SpellGraphNode = current_graph.get_node_by_id(current_node_id)
-	if node == null or node.spell == null or node.spell.delivery == null:
-		return
-	var stats := _base_stats(node.spell)
-	var dir := (get_global_mouse_position() - global_position).normalized()
-	node.spell.delivery.fire(self, dir, stats, node.spell.max_range, node.spell.base_effects)
-	facing_direction = _direction_name(dir)
-	sprite_animator.play_one_shot("cast_release_attack")
+	if node != null and node.spell != null:
+		var dir := (get_global_mouse_position() - global_position).normalized()
+		node.spell.cast(self, dir)
+		facing_direction = _direction_name(dir)
+		sprite_animator.play_one_shot("cast_release_attack")
 	_exit_focus()
 
 ## 近戰三連段的單次判定：朝滑鼠方向、距離+夾角判定（不靠物理形狀，複用舊 boss 吸引懲罰用過的
@@ -386,17 +489,16 @@ func _perform_melee_hit() -> void:
 	sprite_animator.play_one_shot("cast_release_attack")
 	MagicFX.spawn_burst(get_tree().current_scene, global_position + aim_dir * MELEE_RANGE * 0.5, Color(1, 0.6, 0.3), 10, 140.0)
 
-## 蓄力火球：一般狀態下按住 cast_spell 超過 CHARGE_THRESHOLD 秒才放開觸發。docs/DEMO_PLAN.md
-## 明講這個 phase 「先直接用 SpellProjectile.tscn+ProjectileDelivery 兜一顆最簡單的投射物即可，
-## 不用等 Phase 2 的圖譜資料結構」——這裡沒有透過 Spell/SpellDelivery Resource，直接手動組一顆
-## ExplosiveImpact 塞給 SpellProjectile.setup()，等 Phase 2/3 有了真正的 fire_graph.tres，
-## 這顆「Basic 火球術」的實作會被圖譜節點的 Spell 資源取代，不是定案的最終做法。
+## 蓄力火球：一般狀態下按住 cast_spell 超過 CHARGE_THRESHOLD 秒才放開觸發。這裡沒有透過
+## Spell/ProjectileSpell Resource，直接手動組一顆 ExplosiveImpact 塞給
+## FireballProjectile.setup()（跟圖譜節點「basic」用的是同一支投射物類別，兩邊長相/飛行物理
+## 一致），不是定案的最終做法——概念上是同一把火球術，但目前各自獨立觸發，還沒有真的共用
+## 同一份 `.tres`。
 func _fire_charged_fireball() -> void:
 	var dir := (get_global_mouse_position() - global_position).normalized()
 	var impact := ExplosiveImpact.new()
 	impact.radius = CHARGED_FIREBALL_RADIUS
-	var projectile_scene: PackedScene = load("res://scenes/spells/SpellProjectile.tscn")
-	var projectile := projectile_scene.instantiate()
+	var projectile := FireballProjectile.new()
 	get_tree().current_scene.add_child(projectile)
 	projectile.global_position = global_position
 	projectile.setup(dir, CHARGED_FIREBALL_DAMAGE, CHARGED_FIREBALL_RANGE, CHARGED_FIREBALL_SPEED, impact)
@@ -519,23 +621,33 @@ func _fail_combo() -> void:
 ## 都不是「按住累積一段固定時間」的概念，沒有對應物可以保留骨架。equipped_spell/
 ## equipped_spells 兩個欄位也跟著沒有用途了，但先不刪（之後符文圖譜可能需要類似概念）。
 ##
-## _base_stats() 留著：從 Spell.base_effects 組出 stats dict 這個邏輯是通用的，
-## docs/DEMO_PLAN.md Phase 2/3 讓玩家施放圖譜節點法術時會直接重用這個函式。
-func _base_stats(spell: Spell) -> Dictionary:
-	var stats := {"damage": 0.0}
-	for effect in spell.base_effects:
-		if effect.apply_mode == SpellEffect.ApplyMode.INSTANT:
-			effect.apply(stats)
-	return stats
+## 2026-10-13 Phase 3：原本這裡還有一個 _base_stats()，從 Spell.base_effects 組出 stats
+## dict 給 _cast_current_node() 用——Phase 3 把 SpellDelivery/SpellEffect 那套通用組合換成
+## 每個 Spell 子類別自己的 cast()（見 scripts/spells/Spell.gd 開頭註解），stats dict 這個
+## 中間層不需要了，_base_stats() 跟著刪除。
 
 func take_damage(amount: float) -> void:
 	if is_dead:
 		return
-	hp = max(0.0, hp - amount)
+	var final_amount: float = amount * shield_damage_mult if shield_timer > 0.0 else amount
+	hp = max(0.0, hp - final_amount)
 	hazard_flash_timer = 0.25
 	hp_changed.emit(hp / MAX_HP)
 	MagicFX.spawn_burst(get_tree().current_scene, global_position, Color(1, 0.5, 0.1), 10, 150.0)
 	sprite_animator.play_one_shot("hurt")
+	if hp <= 0.0:
+		_die()
+
+## 安靜扣血（DamageZone.gd 的 DOT 模式用，跟 TestDummy.gd 的同名函式同一個理由：持續燃燒
+## 傷害不該每 tick 都觸發完整的受擊反應——沒有 hazard_flash/MagicFX 爆裂/hurt 動畫，只扣血、
+## 更新血量 UI、死亡時照常走 _die()。護盾減傷（shield_damage_mult）兩個入口都套用，持續
+## 傷害不該因為走安靜扣血這條路就繞過防禦力。
+func take_dot_damage(amount: float) -> void:
+	if is_dead:
+		return
+	var final_amount: float = amount * shield_damage_mult if shield_timer > 0.0 else amount
+	hp = max(0.0, hp - final_amount)
+	hp_changed.emit(hp / MAX_HP)
 	if hp <= 0.0:
 		_die()
 
@@ -547,6 +659,7 @@ func _die() -> void:
 	is_dashing = false
 	is_focused = false
 	is_charging = false
+	is_retreating = false
 	Engine.time_scale = 1.0
 	velocity = Vector2.ZERO
 	died.emit()

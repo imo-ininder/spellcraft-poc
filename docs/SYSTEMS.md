@@ -6,9 +6,11 @@
 
 ## 1. 基礎 Dash（`Player.gd`）
 
-空白鍵觸發，不走 `Spell`/`SpellDelivery` 架構、不佔用法術欄位、沒有冷卻。方向取按下當下的 WASD（跟滑鼠瞄準方向無關），站著不動時用 `last_move_direction`（上一次有實際移動輸入的方向）。`DASH_DURATION`（0.12秒）內用 `DASH_SPEED` 持續呼叫 `move_and_slide()`，會自然貼牆滑行、碰到牆就停下，不是瞬移。`DASH_SPEED` 直接用 `50.0 / DASH_DURATION` 算（衝刺距離是 50px），數值本身就是「50px」這個意圖，不是另外存一個容易跟 `DASH_DURATION` 脫鉤的獨立常數。吟唱中、衝刺進行中都不會觸發/疊加。
+空白鍵觸發，不走 `Spell`/`SpellDelivery` 架構、不佔用法術欄位、沒有冷卻。方向取按下當下的 WASD（跟滑鼠瞄準方向無關），站著不動時用 `last_move_direction`（上一次有實際移動輸入的方向）。`DASH_DURATION`（0.12秒）內持續呼叫 `move_and_slide()`，會自然貼牆滑行、碰到牆就停下，不是瞬移。吟唱中、衝刺進行中都不會觸發/疊加。
 
-目前只有這個基礎分支——裝備位移類法術時改走 `AoETargetingDelivery` 選點移動施法者座標的分支，從來沒有對應法術驗證過，新系統（`docs/FIRE_PROTOTYPE.md` 的「火焰撤離」節點）如果要做位移類效果，這個分支可以參考，但目前還是空的。
+**2026-10-13 系統性修正**：原本速度是一個 const（`50.0/DASH_DURATION`），`velocity = dash_direction * 這個const`——使用者發現這是個系統性問題：純世界座標的「方向×純量」，在這個專案的壓扁視角（Y軸壓縮，見 `GroundProjection.squash`）下，往垂直方向移動的視覺/判定距離會比往水平方向移動明顯短。改成 `DASH_DISTANCE`（設計意圖「50px」，不再是速度常數）在 `_start_dash()` 當下用 `GroundProjection.offset_towards(dash_direction, DASH_DISTANCE)` 算出「不管往哪個方向衝刺，視覺距離都是 50px」的世界座標位移向量，再除以 `DASH_DURATION` 得到這次衝刺要用的 `dash_velocity`——方向相關，每次衝刺重算一次，不能再是 const。同一個系統性問題也修了火焰撤離的位移、火牆術的火柱間距/生成位置、投射物的飛行距離判斷，見 `docs/SPELL_SYSTEM.md` 的對應章節跟 `GroundProjection.offset_towards()` 的函式註解。
+
+目前只有這個基礎分支——位移類法術（火焰撤離，`docs/DEMO_PLAN.md` Phase 6）最後是完全獨立的一套位移（`Player.start_retreat()`/`_process_retreat()`），使用者明確要求不要跟 Dash 或 `apply_knockback()` 共用，細節見 `docs/SPELL_SYSTEM.md` §2.4。
 
 ---
 
@@ -35,7 +37,16 @@ Magicka 調性：Q 版、鮮豔、誇張特效的奇幻風格。地板/場地用
 
 **`GroundProjection` 身兼兩個角色：(1) 視覺壓扁的幾何工具，(2) 範圍判定的距離公式**——`squash`（目前0.5）是唯一的壓扁係數來源。`projected_distance(a, b)`（Y方向差距除以 squash 再算距離，取代 `distance_to()`/`.length()`）確保「視覺上畫的橢圓範圍」跟「程式判定的命中範圍」是同一個形狀，不會出現視覺壓扁了但判定還是用正圓的落差（這是 2026-10-11 修過的真實 bug）。`projected_velocity(direction, speed)`：上下方向移動的世界座標速度乘上 `squash`（變慢）——因為 `projected_distance()` 讓上下方向判定範圍天生比左右方向更容易進入（Y差距影響力被放大），移動速度對應變慢才能讓「走進某個範圍要花多久」不管從哪個方向接近都一致，`Player._process_movement()` 已經套用。`ellipse_point(center, radius, angle)`／`ellipse_points(center, radius, segments)`／`clamp_to_radius()`／`clamp_to_ring()`／`ellipse_normal()`：給橢圓邊界的座標/夾限/反彈法線用（**不能**用「圓心→該點」方向算法線，那是正圓公式，橢圓上任一點的法線方向跟半徑方向不同）。
 
-**刻意不套這套壓扁系統的東西**：角色/投射物的實際碰撞形狀（`CircleShape2D` 全部維持圓形——範圍判定是程式碼手動算距離，碰撞是 Godot 物理引擎的實際形狀重疊，兩者是不同機制，碰撞形狀都很小，沒必要冒多邊形橢圓近似的複雜度/效能風險）；Dash/Knockback（瞬間物理反饋，不套這個系統）；`MagicFX.make_sparkle_trail()` 的拖尾粒子（軌跡在空中飛，不需要壓扁）。
+**`offset_towards(direction, distance)`（2026-10-13 新增）**：給「固定距離的一次性位移/生成位置/排列間距」用，是這類系統性 bug 的統一解法——使用者發現火牆術的火柱間距往水平方向射出會重疊（符合設計），往垂直方向射出卻不會，追出根因是任何用 `direction * distance` 算世界座標位移/位置的地方，都會在壓扁視角下出現「水平方向距離感正常、垂直方向距離感變短」的系統性問題（純世界座標的 Y 分量在視覺上被壓縮，但位移計算本身沒有跟著校正）。這個函式回傳「projected_length() 等於指定 distance」的世界座標向量，呼叫端拿到就直接用，不用自己處理壓扁。已經套用的地方：
+- `Player.gd`：Dash（`dash_velocity`，衝刺距離跟方向無關）、火焰撤離位移（`start_retreat()`）。
+- `FireWallSpell.gd`：火柱間距（`spacing`）跟生成位置（`distance_ahead`）。
+- `FireGroundSpell.gd`：生成位置（`spawn_distance`）。
+- `FireRetreatSpell.gd`：身後軌跡（`FireRetreatTrailZone`）的位置/長度，呼叫端跟 `Player.start_retreat()` 各自獨立呼叫同一個純函式算，不是共用一份算好的狀態，兩邊數學上保證算出同一個結果。
+- `SpellProjectile.gd`：飛行距離判斷——投射物的 `max_range` 門檻原本直接累加每幀 `step.length()`（原始世界座標距離），改成另外累加一份 `projected_length(step)`（`projected_distance_traveled`），只用在 `max_range` 判斷；原本的 `distance_traveled`（原始距離）保留給子類別的本地座標長相用（例如 `FireArrowProjectile` 的射線長度要跟 `position` 實際移動的原始距離對齊，不能用投影後的）。連帶修正 `FireArrowProjectile` 收尾階段尾巴追的目標從 `max_range`（現在是投影後門檻，往垂直方向射出時頭實際飛到的原始距離會小於它）改成 `distance_traveled`（頭實際停在哪，尾巴就追到哪）。
+
+`clamp_to_radius()`/`clamp_to_ring()` 原本各自手刻一份「沿方向算 scale」的算式，現在改呼叫 `offset_towards()`，同一條公式只寫一次。
+
+**刻意不套這套壓扁系統的東西**：角色/投射物的實際碰撞形狀（`CircleShape2D` 全部維持圓形——範圍判定是程式碼手動算距離，碰撞是 Godot 物理引擎的實際形狀重疊，兩者是不同機制，碰撞形狀都很小，沒必要冒多邊形橢圓近似的複雜度/效能風險）；Knockback（力道+摩擦力衰減的物理反饋，沒有一個「目標距離」的概念可以校正，不是這次的範圍）；`MagicFX.make_sparkle_trail()` 的拖尾粒子（軌跡在空中飛，不需要壓扁）。
 
 **2026-10-13 現況**：`scripts/core/Arena.gd`（原本的三環場地結構：玩家場地/縫隙/boss環道，整個套了壓扁橢圓）沒有被任何場景使用了（`Main.tscn` 已刪除），是孤兒腳本——裡面定義的 `ARENA_CENTER`/`PLAYER_ZONE_RADIUS`/`BOSS_RING_INNER_RADIUS`/`ARENA_RADIUS`/`BOSS_TRACK_RADIUS` 這些 `const` 還被 `SpellProjectile.gd` 的牆壁反彈判斷讀取（見 `docs/SPELL_SYSTEM.md` §3.1），但因為沒有場景有 `Arena` 節點，那條判斷式永遠走不到。腳本本身沒刪（可能之後新戰鬥場地會重新設計/沿用部分邏輯），只是目前完全不在運作。`scenes/SpellTestRange.tscn` 目前用的地板是 `scripts/core/TestRangeFloor.gd`（簡化版圓形地板+同心圓參考線，跟 `Arena.gd` 無關，不分玩家/怪物場地）。
 

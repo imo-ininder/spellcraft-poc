@@ -1,13 +1,17 @@
 class_name FocusHUD
 extends Control
 
-## 專注狀態 HUD：顯示目前法術圖譜節點名稱＋符文輸入成功/失敗的短暫回饋
-## （docs/DEMO_PLAN.md §6）。跟 CastBar.gd／HealthOrb.gd 同一個 bind(player) 慣例。
+## 專注狀態 HUD：顯示目前法術圖譜節點名稱＋符文輸入成功/失敗的短暫回饋（docs/DEMO_PLAN.md
+## §6）。跟 CastBar.gd／StatusBars.gd 同一個 bind(player) 慣例。
 ##
 ## 只在專注狀態下顯示，用 _process() 輪詢 player.is_focused 做可見度切換——這是單純的
 ## 布林開關，不像 CastBar 需要逐幀同步一個連續進度值，不需要為此新增訊號。
 ## 節點名稱／成功/失敗閃色用訊號驅動（node_changed／combo_failed），不是每幀重新查一次
 ## 目前節點（圖譜查詢沒有快取，見 SpellGraph.get_node_by_id()，沒必要每幀白跑一次）。
+##
+## 2026-10-13：專注值條原本掛在這裡，後來搬到 StatusBars.gd（畫面左上角，跟血量放一起，
+## 永遠顯示）——專注值是「資源存量」，不是「專注狀態才需要知道」的資訊，使用者明確要求比照
+## 血量處理，跟 FocusHUD 這種「只在專注中才有意義」的情境資訊（目前在哪個符文節點）分開。
 
 @onready var node_label: Label = $NodeLabel
 

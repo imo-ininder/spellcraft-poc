@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="FireRetreatSpell" format=3]
+
+[ext_resource type="Script" path="res://scripts/spells/FireRetreatSpell.gd" id="1_spell"]
+
+[resource]
+script = ExtResource("1_spell")
+id = "fire_retreat"
+display_name = "火焰撤離"
+description = "向瞄準方向的反方向位移一段距離，原地留下一塊長方形的持續燃燒地面（docs/FIRE_PROTOTYPE.md §6.4）。"
+retreat_distance = 120.0
+trail_width = 50.0
+damage_per_tick = 3.0
+tick_interval = 0.5
+duration = 3.0

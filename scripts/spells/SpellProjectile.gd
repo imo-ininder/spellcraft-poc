@@ -1,19 +1,46 @@
+class_name SpellProjectile
 extends Area2D
+
+## 共用的「直線投射物飛行骨架」——怎麼往前飛、飛多遠算到底、撞牆怎麼反彈、撞到東西怎麼交給
+## impact.resolve() 處理。這些純粹是飛行物理，任何一把法術的直線投射物都需要一模一樣的版本，
+## 不是「法術差異化」會發生的地方（2026-10-13 討論定案：法術的長相/收尾手感要各自拆開，但
+## 純直線飛行的數學沒有「選擇意義」，複製只會製造維護負擔，不會讓任何一把法術感覺更獨特——
+## 細節見 docs/SPELL_SYSTEM.md）。
+##
+## 這個類別不會被直接拿來生成，實際場景永遠是子類別：
+## - `FireballProjectile`（火球術）：命中/飛到底爆炸範圍傷害，圓球+火花拖尾的長相。
+## - `FireArrowProjectile`（火焰箭）：全程穿透不消失，紅色射線伸展+收尾的長相。
+## 子類別各自覆寫自己的「長相」（`_draw()`）跟「飛到底之後要做什麼」（`_on_max_range_reached()`，
+## 預設是立刻 `_resolve(null)`），兩邊的程式碼完全不會互相碰到。之後如果某把法術的移動方式
+## 根本不是直線飛行（例如射出型火牆、位移類），不需要繼承這個類別，直接寫自己的場景/腳本
+## 即可，不受這裡的架構綁住。
 
 var velocity := Vector2.ZERO
 var damage := 10.0
-var spin := 0.0
-var orb_color := Color(1, 0.9, 0.2)
-var trail: CPUParticles2D
 var max_range := 650.0
+## 世界座標（原始、未校正）累積飛行距離——子類別的本地座標長相（例如 FireArrowProjectile
+## 的射線長度）要用這個，因為 position 本身也是用原始世界座標在移動，兩者要對得上。
 var distance_traveled := 0.0
+## 2026-10-13 系統性修正：max_range 的「到底了沒」判斷不能用上面的原始距離——使用者發現
+## 投射物往垂直方向飛的視覺飛行距離，會比往水平方向飛明顯短（壓扁視角下，同樣的世界座標
+## 位移量，Y 方向「看起來」比 X 方向短，詳見 GroundProjection.offset_towards() 的註解）。
+## 這裡另外累積一份投影後距離，只用在 max_range 判斷，不影響 distance_traveled 的其他用途。
+var projected_distance_traveled := 0.0
 var impact: ProjectileImpact
 var bounces_off_walls := false
 var _resolved := false
 
-## speed 由呼叫端（ProjectileDelivery.fire()）算好：預設是「travel_time 秒內飛完 max_range」反推出來的，
-## 但 fixed_speed>0 的法術（例如雷電箭）會直接給固定值，不隨 max_range 變動——SpellProjectile 自己
-## 不管是哪一種，只負責照給定的 speed 飛，細節見 docs/SPELL_SYSTEM.md。
+## 投射物的大小/寬度，由 `ProjectileSpell.size`（見該檔案）傳進來——子類別各自決定這個數字
+## 要怎麼影響碰撞形狀半徑跟長相比例尺，基底類別本身不畫東西、不建碰撞形狀，純粹代為保存這個
+## 設定值，在子類別 `_ready()` 真正用到之前（子類別必須在呼叫 `add_child()` 把自己放進場景樹
+## 之前就設定好這個欄位，因為碰撞形狀是在 `_ready()` 建的）。
+var size := 8.0
+
+## 給 `_bounce_off_arena_bounds()` 反彈火花用的顏色，子類別各自在 `_ready()` 設定自己的主題色。
+var trail_color := Color(1, 1, 1)
+
+## speed 由呼叫端（`ProjectileSpell.cast()`）算好，直接當固定飛行速度，不隨 max_range 變動
+## ——SpellProjectile 自己只負責照給定的 speed 飛，細節見 docs/SPELL_SYSTEM.md。
 func setup(direction: Vector2, dmg: float, range_limit: float, speed: float, impact_behavior: ProjectileImpact, bounce: bool = false) -> void:
 	damage = dmg
 	max_range = range_limit
@@ -21,15 +48,9 @@ func setup(direction: Vector2, dmg: float, range_limit: float, speed: float, imp
 	impact = impact_behavior
 	bounces_off_walls = bounce
 	rotation = velocity.angle()
-	if impact is ExplosiveImpact:
-		orb_color = Color(1.0, 0.45, 0.15)
-	elif impact is PiercingImpact:
-		orb_color = Color(0.3, 0.9, 1.0)
 
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
-	trail = MagicFX.make_sparkle_trail(self, orb_color)
-	trail.emitting = true
 
 func _physics_process(delta: float) -> void:
 	if _resolved:
@@ -37,25 +58,30 @@ func _physics_process(delta: float) -> void:
 	var step := velocity * delta
 	position += step
 	distance_traveled += step.length()
+	projected_distance_traveled += GroundProjection.projected_length(step)
 	if bounces_off_walls:
 		_bounce_off_arena_bounds()
-	spin += delta * 20.0
 	queue_redraw()
-	if distance_traveled >= max_range:
-		_resolve(null)
+	if projected_distance_traveled >= max_range:
+		_on_max_range_reached()
+
+## 飛到底之後要做什麼——預設直接消失。子類別可以覆寫成別的收尾行為（例如
+## `PiercingBoltProjectile` 的延遲+射線收尾），基底類別本身不知道、也不需要知道有這種變化。
+func _on_max_range_reached() -> void:
+	_resolve(null)
 
 ## 用場地邊界的位置判斷做反彈，不是物理碰撞——SpellProjectile 的 collision_mask 刻意不偵測牆壁
-## （見 docs/SPELL_SYSTEM.md），這樣才不會影響 Fireball 等其他法術既有的飛越牆壁手感。
+## （見 docs/SPELL_SYSTEM.md），這樣才不會影響其他法術既有的飛越牆壁手感。
 ## 圓形場地：超出半徑時夾回圓周上，velocity 用該點的圓周法線（圓心→該點方向）反射，
 ## 跟矩形時代「水平/垂直分別判斷、各自翻轉」的做法不同，但效果一樣是「撞到邊界彈回來」。
 ## 場地改成內圈玩家場地+外圈boss環道之後，這裡要用 PLAYER_ZONE_RADIUS（玩家自己的場地邊界），
-## 不是 ARENA_RADIUS（那是外圈boss環道的外緣）——雷電箭是玩家法術，玩家本人被牆物理擋在
+## 不是 ARENA_RADIUS（那是外圈boss環道的外緣）——投射物本身是玩家法術，玩家本人被牆物理擋在
 ## PLAYER_ZONE_RADIUS 以內，投射物的反彈邊界理當跟著玩家能站的範圍走，不是場地最外圈那麼遠
 ## （用 ARENA_RADIUS 的話，投射物會直接飛穿過縫隙、飛進 boss 環道，在那邊彈來彈去，不合理）。
 ##
 ## 2026-10-12 修正：`Arena.ARENA_CENTER`/`Arena.PLAYER_ZONE_RADIUS` 是宣告在 Arena 腳本類別上
 ## 的 const，不管目前在哪個場景、場景裡有沒有真的放一個 Arena 節點，都讀得到同一組寫死數值
-## （Main.tscn 專用的座標）——`scenes/SpellTestRange.tscn` 沒有 Arena 節點、也沒有牆，但雷電箭
+## （Main.tscn 專用的座標）——`scenes/SpellTestRange.tscn` 沒有 Arena 節點、也沒有牆，但投射物
 ## 照樣會拿 Main.tscn 的場地座標來反彈，導致看起來「沒有從角色位置發射」（玩家出生點離
 ## Arena.ARENA_CENTER 的距離本來就超出 PLAYER_ZONE_RADIUS，第一幀就被夾限彈飛）＋「沒有牆的
 ## 地方也會反彈」兩個症狀，其實是同一個根因。改成先確認目前場景真的有 Arena 節點（代表真的在
@@ -75,7 +101,7 @@ func _bounce_off_arena_bounds() -> void:
 	var normal := GroundProjection.ellipse_normal(Arena.ARENA_CENTER, Arena.PLAYER_ZONE_RADIUS, global_position)
 	velocity = velocity.bounce(normal)
 	rotation = velocity.angle()
-	MagicFX.spawn_burst(get_parent(), global_position, orb_color, 8, 120.0)
+	MagicFX.spawn_burst(get_parent(), global_position, trail_color, 8, 120.0)
 
 func _on_body_entered(body: Node) -> void:
 	if _resolved:
@@ -86,35 +112,3 @@ func _resolve(body: Node) -> void:
 	if impact.resolve(self, body):
 		_resolved = true
 		queue_free()
-
-const BOLT_LENGTH := 44.0
-const BOLT_SEGMENTS := 6
-
-func _draw() -> void:
-	if impact is PiercingImpact:
-		_draw_bolt()
-	else:
-		_draw_orb()
-
-func _draw_orb() -> void:
-	draw_circle(Vector2.ZERO, 9, Color(orb_color, 0.35))
-	draw_circle(Vector2.ZERO, 6, orb_color)
-	draw_circle(Vector2.ZERO, 2.5, Color(1, 1, 1))
-	for i in range(3):
-		var a := spin + i * (TAU / 3.0)
-		draw_circle(Vector2(cos(a), sin(a)) * 10, 1.5, Color(1, 1, 1, 0.8))
-
-## 雷電箭專用畫法：沿著飛行方向（本地 +X 軸，setup()/反彈時都會更新 rotation）拖出一條
-## 會抖動的鋸齒長條，頭尖尾散，用 spin 讓它邊飛邊electric crackle，不是一個圓點。
-func _draw_bolt() -> void:
-	var points := PackedVector2Array()
-	for i in range(BOLT_SEGMENTS + 1):
-		var t := float(i) / float(BOLT_SEGMENTS)
-		var x: float = lerp(8.0, -BOLT_LENGTH, t)
-		var taper := sin(t * PI)
-		var jitter := sin(spin * 4.0 + i * 2.3) * 5.0 * taper
-		points.append(Vector2(x, jitter))
-	draw_polyline(points, Color(orb_color, 0.3), 11.0, true)
-	draw_polyline(points, Color(orb_color, 0.7), 5.5, true)
-	draw_polyline(points, Color(1, 1, 1, 0.95), 2.0, true)
-	draw_circle(points[0], 3.5, Color(1, 1, 1, 1.0))

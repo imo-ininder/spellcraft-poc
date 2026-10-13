@@ -35,18 +35,30 @@ static func projected_distance(a: Vector2, b: Vector2) -> float:
 static func projected_velocity(direction: Vector2, speed: float) -> Vector2:
 	return Vector2(direction.x, direction.y * squash) * speed
 
+## 2026-10-13 新增：給「固定距離的一次性位移/生成位置/排列間距」用——跟上面兩個函式解決的
+## 是同一類問題，只是這個是「我要一個世界座標偏移向量，讓它的 projected_length() 等於我要的
+## distance」，不是逐幀的速度。沒有這個函式之前的症狀：凡是用 `direction * distance` 算
+## 位置/位移的地方（火牆火柱間距、Dash/火焰撤離的位移距離、法術圖譜節點在施法者前方的生成
+## 位置...），往水平方向量出來的視覺距離是對的，往垂直方向做同一件事卻會明顯變短/變密——
+## 因為純世界座標的 `direction * distance`，Y 方向在壓扁視角下「看起來」比 X 方向短，這裡
+## 統一校正成「不管往哪個方向，看起來/判定起來的距離都一樣」，呼叫端完全不用自己處理壓扁，
+## 拿到的向量直接用就好。公式：想要 `projected_length(dir * k) == distance`，解 k。
+static func offset_towards(direction: Vector2, distance: float) -> Vector2:
+	var dir := direction.normalized()
+	if dir == Vector2.ZERO:
+		return Vector2.ZERO
+	return dir * (distance / projected_length(dir))
+
 ## 把 to 點夾限在「以 from 為中心、投影後距離最多 max_dist」的橢圓邊界內——沿著 from→to
 ## 的直線方向夾限，不是沿著橢圓角度走（跟正圓時代的 offset.normalized() * max_dist 是同一個
-## 概念，只是距離換算要先除以沿著這個方向的投影比例）。AoETargetingReticle.gd 的滑鼠選點夾限、
-## 任何「預覽這把法術大概會打在哪」的地方都共用這個，不要各自複製一份夾限數學，不然兩邊會
-## 慢慢漂移走樣（教訓見 CLAUDE.md 架構規則6）。
+## 概念，只是距離換算要先除以沿著這個方向的投影比例，見 offset_towards()）。
+## AoETargetingReticle.gd 的滑鼠選點夾限、任何「預覽這把法術大概會打在哪」的地方都共用這個，
+## 不要各自複製一份夾限數學，不然兩邊會慢慢漂移走樣（教訓見 CLAUDE.md 架構規則6）。
 static func clamp_to_radius(from: Vector2, to: Vector2, max_dist: float) -> Vector2:
 	var offset := to - from
 	if projected_length(offset) <= max_dist:
 		return to
-	var raw_dir := offset.normalized()
-	var scale: float = max_dist / projected_length(raw_dir)
-	return from + raw_dir * scale
+	return from + offset_towards(offset, max_dist)
 
 ## 貼地橢圓的頂點座標（squash 套在 Y 軸），畫輪廓用 draw_polyline(points, ..., true) 或填色用
 ## draw_colored_polygon(points, ...) 都可以直接吃這組點。集中在這裡，AoETargetingReticle.gd／
@@ -75,11 +87,10 @@ static func clamp_to_ring(from: Vector2, to: Vector2, min_dist: float, max_dist:
 	var dist := projected_length(offset)
 	if dist < 0.0001:
 		return to
-	var raw_dir := offset.normalized()
 	if dist > max_dist:
-		return from + raw_dir * (max_dist / projected_length(raw_dir))
+		return from + offset_towards(offset, max_dist)
 	if min_dist > 0.0 and dist < min_dist:
-		return from + raw_dir * (min_dist / projected_length(raw_dir))
+		return from + offset_towards(offset, min_dist)
 	return to
 
 ## 給橢圓邊界反彈用：point 是（大約）落在以 center 為圓心、radius 為橢圓長軸半徑的橢圓邊界上

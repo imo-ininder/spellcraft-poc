@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="FireballSpell" format=3]
+
+[ext_resource type="Script" path="res://scripts/spells/FireballSpell.gd" id="1_spell"]
+
+[resource]
+script = ExtResource("1_spell")
+id = "basic"
+display_name = "火球術"
+description = "直線投射物，命中敵人或飛行距離耗盡時在小範圍內爆炸造成傷害。操作簡單、施放直接，是其他火系法術的起始節點（docs/FIRE_PROTOTYPE.md §6.1）。"
+travel_range = 500.0
+speed = 600.0
+size = 9.0
+piercing = false
+damage = 12.0
+explosion_radius = 70.0

@@ -16,9 +16,18 @@ func _ready() -> void:
 func take_damage(amount: float) -> void:
 	hp = max(0.0, hp - amount)
 	flash_timer = 0.15
-	_spawn_damage_label(amount)
+	_spawn_damage_label(amount, false)
 	_bounce()
 	queue_redraw()
+	if hp <= 0.0:
+		hp = MAX_HP
+
+## 安靜扣血（DamageZone.gd 的 DOT 模式用，見 docs/SPELL_SYSTEM.md）：只扣血＋跳一個比較
+## 不顯眼的傷害數字，不閃白／不彈一下／不擊退——站在燃燒地面上應該是持續流血的感覺，不是
+## 每個 tick 都像被揍一次。跟 take_damage() 共用扣血夾限/死亡重置邏輯，不要各自維護一份。
+func take_dot_damage(amount: float) -> void:
+	hp = max(0.0, hp - amount)
+	_spawn_damage_label(amount, true)
 	if hp <= 0.0:
 		hp = MAX_HP
 
@@ -32,11 +41,13 @@ func _bounce() -> void:
 	var tween := create_tween()
 	tween.tween_property(self, "squash", 1.0, 0.25).set_trans(Tween.TRANS_ELASTIC)
 
-func _spawn_damage_label(amount: float) -> void:
+func _spawn_damage_label(amount: float, is_dot: bool = false) -> void:
 	var label := Label.new()
 	label.text = str(int(amount))
 	label.position = Vector2(randf_range(-10, 10), -50)
-	label.modulate = Color(1, 0.8, 0.2)
+	label.modulate = Color(1, 0.5, 0.2, 0.6) if is_dot else Color(1, 0.8, 0.2)
+	if is_dot:
+		label.add_theme_font_size_override("font_size", 12)
 	add_child(label)
 	var tween := create_tween()
 	tween.tween_property(label, "position:y", label.position.y - 30, 0.6)

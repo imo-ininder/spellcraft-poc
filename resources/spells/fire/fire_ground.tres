@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="FireGroundSpell" format=3]
+
+[ext_resource type="Script" path="res://scripts/spells/FireGroundSpell.gd" id="1_spell"]
+
+[resource]
+script = ExtResource("1_spell")
+id = "fire_ground"
+display_name = "火焰地面"
+description = "在身前創造一片持續燃燒的火焰地板，站在裡面會持續安靜地流血（DOT，不是每次都像被打一次）。控制地面空間，威脅經過或停留在該處的敵人（docs/FIRE_PROTOTYPE.md §6.6）。"
+damage_per_tick = 4.0
+duration = 4.0
+radius = 120.0
+spawn_distance = 60.0

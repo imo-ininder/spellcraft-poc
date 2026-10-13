@@ -9,10 +9,12 @@ extends Node2D
 ## 無害）。
 ##
 ## Phase 2：新增 FocusHUD 綁定，跟 bind(player) 既有慣例一致。
+## Phase 4：新增 StatusBars 綁定——血量＋專注值，畫面左上角永遠顯示，同一個 bind(player) 慣例。
 
 @onready var player: CharacterBody2D = $Player
 @onready var test_dummy: StaticBody2D = $TestDummy
 @onready var focus_hud: FocusHUD = $UI/FocusHUD
+@onready var status_bars: StatusBars = $UI/StatusBars
 @onready var debug_bg: ColorRect = $UI/DebugBg
 @onready var debug_label: Label = $UI/DebugLabel
 
@@ -23,6 +25,7 @@ var _f3_was_pressed := false
 
 func _ready() -> void:
 	focus_hud.bind(player)
+	status_bars.bind(player)
 	debug_bg.visible = false
 	debug_label.visible = false
 
@@ -39,13 +42,14 @@ func _process(_delta: float) -> void:
 func _build_debug_text() -> String:
 	var lines: Array[String] = ["[F3] 除錯面板", ""]
 
-	lines.append("--- 測試狀態（docs/DEMO_PLAN.md Phase 1/2）---")
+	lines.append("--- 測試狀態（docs/DEMO_PLAN.md Phase 1/2/4）---")
 	lines.append("is_focused: %s" % player.is_focused)
 	lines.append("current_node_id: %s" % player.current_node_id)
 	lines.append("combo_buffer: '%s'" % player.combo_buffer)
 	lines.append("is_charging: %s" % player.is_charging)
 	if player.is_charging:
 		lines.append("charge_timer: %.2fs" % player.charge_timer)
+	lines.append("focus_value: %.2f / %.2f" % [player.focus_value, player.FOCUS_MAX])
 	lines.append("combo_stage: %d" % player.combo_stage)
 	lines.append("Engine.time_scale: %.2f" % Engine.time_scale)
 	if is_instance_valid(test_dummy):

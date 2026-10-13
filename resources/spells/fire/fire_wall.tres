@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="FireWallSpell" format=3]
+
+[ext_resource type="Script" path="res://scripts/spells/FireWallSpell.gd" id="1_spell"]
+
+[resource]
+script = ExtResource("1_spell")
+pillar_count = 10
+tick_interval = 0.3
+duration = 5.0
+id = "fire_wall"
+display_name = "火牆術"
+description = "在前方一定距離處一次創造一排火柱（依序點燃），擋在範圍內的目標持續受到灼燒傷害（docs/FIRE_PROTOTYPE.md §6.7）。"
