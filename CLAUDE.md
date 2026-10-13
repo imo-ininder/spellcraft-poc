@@ -14,7 +14,7 @@ Spellcraft PoC：法師版「魔物獵人」，純 PVE。Godot 4.6.2，GDScript�
 
 ## 目前進度（流程：Lobby → Main）
 
-啟動場景是 `scenes/Lobby.tscn`（大廳，配置法術格），按「出發」後切換到 `scenes/Main.tscn`（戰鬥）。已實作：超魔專長吟唱判定、五把法術（火球術/力場波/雷電箭/隱形術/速度提升，涵蓋 `ProjectileDelivery`/`SelfDelivery`/`AoETargetingDelivery`/`SelfBuffDelivery` 四種 delivery，buff 類法術的 DURATION 效果機制已落地，見 `docs/SPELL_SYSTEM.md` §8.15）、法術切換輪盤（支援任意把數）、基礎 Dash、右鍵瞬發、競技場（內圈玩家場地＋外圈 boss 環道，中間隔一圈不能互通的縫隙，見 `docs/BOSS_DESIGN.md` §2.5）、Demo boss（`scripts/entities/boss/`：遠程型法師，固定沿外圈軌道巡邏（不追玩家，物理上也碰不到玩家），分身誤導機制（逐批累加、分身+本體總共上限5個）＋火球雨/光球連擊兩個遠程週期招式隔空打進內圈，吸引懲罰目前停用，見 `docs/BOSS_DESIGN.md`）、法術格系統（固定6格，`GameState` autoload 跨場景傳遞）、開發用除錯面板（F3 切換，顯示玩家 buff 狀態/boss AI 狀態機，見 `Main.gd`）。**還沒做**：真實HP/死亡/結算畫面（玩家被打只閃光不扣血，boss 本體血量歸零會重置滿血——分身的3HP是例外，是真的會消失，這次刻意只做這一塊）、位移類法術（目前只有基礎Dash，`AoETargetingDelivery` 移動施法者那條收尾路徑還沒驗證過）、美術/音樂（全部仍是`_draw()`程式繪圖）。
+啟動場景是 `scenes/Lobby.tscn`（大廳，配置法術格），按「出發」後切換到 `scenes/Main.tscn`（戰鬥）。已實作：超魔專長吟唱判定、五把法術（火球術/力場波/雷電箭/隱形術/速度提升，涵蓋 `ProjectileDelivery`/`SelfDelivery`/`AoETargetingDelivery`/`SelfBuffDelivery` 四種 delivery，buff 類法術的 DURATION 效果機制已落地，見 `docs/SPELL_SYSTEM.md` §8.15）、法術切換輪盤（支援任意把數）、基礎 Dash、右鍵瞬發、競技場（內圈玩家場地＋外圈 boss 環道，中間隔一圈不能互通的縫隙，見 `docs/BOSS_DESIGN.md` §2.5）、Demo boss（`scripts/entities/boss/`：遠程型法師，固定沿外圈軌道巡邏（不追玩家，物理上也碰不到玩家），分身誤導機制（逐批累加、分身+本體總共上限5個）＋火球雨/光球連擊兩個遠程週期招式隔空打進內圈，吸引懲罰目前停用，見 `docs/BOSS_DESIGN.md`）、法術格系統（固定6格，`GameState` autoload 跨場景傳遞）、開發用除錯面板（F3 切換，顯示玩家 buff 狀態/boss AI 狀態機，見 `Main.gd`）、**玩家真實HP系統**（2026-10-12 新增：`Player.gd` 的 `hp`/`MAX_HP`/`take_damage()`，被打真的會扣血，不再只閃光；左下角 PoE/暗黑風格液體填充圓球 UI `scripts/ui/HealthOrb.gd`；血量歸零觸發真正死亡，顯示「你死了」畫面＋重試按鈕 `scripts/ui/DeathScreen.gd`，重試＝`reload_current_scene()`，範圍只包含玩家，見 `docs/SPELL_SYSTEM.md` 相關章節）、**boss 血量顯示**（2026-10-12 調整：原本畫在 boss/分身頭上的小血條已移除，改成畫面最上方單獨一條 `scripts/ui/BossHealthBar.gd`，固定追蹤本體血量、裡面寫名稱「分身紅袍法師」（佔位名），分身完全沒有自己的血量 UI，見 `docs/BOSS_DESIGN.md` §1）。**玩家角色美術**（2026-10-12 新增：第一個真正落地的美術資源，取代原本 `Player.gd` 的 `_draw()` 手繪造型——AI 生成的像素風 sprite sheet 切成單幀 PNG 放在 `art/characters/player/`，`scripts/entities/PlayerSpriteAnimator.gd` 動態組 `SpriteFrames`，處理8方向走路/蓄力/釋放/受擊動畫，細節與已知坑見 `docs/ROADMAP.md` §2.1a）。**還沒做**：Boss 真實死亡（本體血量歸零目前仍是重置滿血的佔位行為——分身的3HP是例外，是真的會消失；這次玩家HP系統的範圍明確不含這塊，是刻意的）、位移類法術（目前只有基礎Dash，`AoETargetingDelivery` 移動施法者那條收尾路徑還沒驗證過）、boss/場地/法術特效/UI 的美術（仍是`_draw()`程式繪圖，玩家角色是目前唯一的例外）。
 
 ## 架構規則
 
@@ -23,6 +23,7 @@ Spellcraft PoC：法師版「魔物獵人」，純 PVE。Godot 4.6.2，GDScript�
 3. **新增法術必須加進 `GameState.gd:CATALOG`**，否則大廳跟輪盤都不會出現這把法術——這是目前唯一的法術總表來源。
 4. **超魔專長是角色永久天生會的被動，不是裝備/配置給特定法術的東西**（組合表定義在 `GameState.gd:ARCANE_FEATS`，`Player.gd` 只引用它來做判定——大廳的超魔專長一覽分頁也要讀同一份表，所以資料放 GameState，判定邏輯仍在 Player.gd）。大廳要配置的是法術（`Spell.slot_cost` 佔用固定6格），不是專長。別把這兩個搞混，之前有過一輪方向調整才確定下來。
 5. **超魔專長/法術數值目前仍是 Demo 階段的示範值**，不是最終平衡數字，調整前先確認 `docs/DESIGN.md` §3.6、§4.7 是否已記錄原因。
+6. **判斷「該不該共用程式碼」要看這段邏輯會不會被持續調整，不是只看程式碼像不像/場景獨不獨立**：極小、極穩定、幾乎不會再改的工具函式（例如 boss 那群檔案各自複製一份的 `_find_player()`）可以各自複製，共用反而徒增間接層。但任何涉及 UI 呈現、使用者會持續要求調整格式/數值/視覺的邏輯（讀條、計時器顯示、HUD 元件...），一開始就要抽成共用場景（`.tscn`＋`class_name` 腳本，暴露簡單 public API），跟 `Player.tscn`/`HomingMissile.tscn` 這種可重用場景同一個模式，不要先複製再說。踩過一次見 `scripts/ui/CastBar.gd`（`Main.gd`／`SpellTestRange.gd` 原本各自複製一份讀條邏輯，使用者只要求改一邊就對不上，見 `docs/DESIGN.md` §1.6 2026-10-11 記錄）——如果已經複製了，之後使用者對其中一份提出調整需求時，要主動意識到「另一份是不是也要跟著改」，不要只改明確點名的那一份就交差。
 
 ## 已知環境雷
 
@@ -32,6 +33,7 @@ Spellcraft PoC：法師版「魔物獵人」，純 PVE。Godot 4.6.2，GDScript�
 - 無頭模式無法模擬滑鼠/鍵盤輸入，超魔專長輸入手感、輪盤視覺效果務必在 editor 裡實際跑一次確認，不能只靠 headless 檢查判斷「做完了」。角度類邏輯（輪盤選取判定）可以寫一次性驗證腳本用 `Godot --headless --script path.gd` 跑數學驗證，但跑完記得清掉，不要留在專案裡常駐。
 - **`_init()` 裡直接寫繼承自父類別的 `@export` 欄位會編譯失敗**（`Identifier not found: <欄位名>`），即使欄位確實宣告在父類別上——必須加 `self.` 明確限定（`self.apply_mode = ...`），同一個欄位如果是宣告在「這個類別自己身上」則不需要 `self.` 也能在 `_init()` 裡直接賦值（`DamageEffect.gd` 的 `min_amount`/`max_amount` 就是這樣，照樣能用）。只在「`_init()` 賦值繼承來的欄位」這個特定組合才會炸，其餘地方（`_ready()`、一般方法）存取繼承欄位不受影響。踩過一次見 `scripts/spells/InvisibilityEffect.gd`/`SpeedBuffEffect.gd`。
 - **這個環境裡 MCP 連線偶爾會卡在 `AUTH_FAILED`（`registry entry has no token path`）**，通常是在跑 `Godot --headless --import --path .`（重新註冊全域類別用）之後發生——那個指令會另外開一個 Godot 處理程序去註冊 MCP registry，可能把正在跑的 editor 那份 token 蓋掉。`script_check`／`game_start`／`game_stop` 不受影響還能用，但 `execute_code`／`runtime_screenshot`／`runtime_get_script_vars` 這類真正連進 runtime 的工具會持續失敗，agent 自己重試/重開 `game_start` 沒用，需要使用者手動重新連接 editor 的 MCP 才能恢復。
+- **外部腳本（例如 Python/Bash）新增的圖片等二進位資源，Godot 編輯器不會自動偵測匯入**，執行期讀到的材質欄位會是 `null`——要呼叫 MCP 的 `editor_refresh` 且**不帶 `file_paths` 參數**（觸發全專案掃描，不是只傳路徑的 O(1) 單檔模式）才會真的產生對應的 `.import` 檔案；而且就算匯入完成，當下已經在跑的遊戲 session 讀到的仍然是匯入前的舊狀態，要 `game_stop`＋`game_start` 重開一次遊戲才讀得到剛匯入好的資源。跟新增 `class_name` 腳本要先匯入是同一類問題，只是觸發方式不同。
 
 ## 工作方式
 

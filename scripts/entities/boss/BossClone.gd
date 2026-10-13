@@ -76,22 +76,19 @@ func _process(delta: float) -> void:
 	_clamp_to_arena()
 	queue_redraw()
 
+## 2026-10-12：改用 GroundProjection.clamp_to_ring()（跟 Boss.gd 同一份邏輯，各自複製一份，
+## 見檔案開頭「視覺共用、程式碼各自一份」的慣例），壓扁橢圓環狀夾限取代手刻正圓夾限。
 func _clamp_to_arena() -> void:
-	var offset: Vector2 = global_position - Arena.ARENA_CENTER
-	var dist := offset.length()
-	if dist > Arena.ARENA_RADIUS:
-		global_position = Arena.ARENA_CENTER + offset.normalized() * Arena.ARENA_RADIUS
-	elif dist < Arena.BOSS_RING_INNER_RADIUS and dist > 0.1:
-		global_position = Arena.ARENA_CENTER + offset.normalized() * Arena.BOSS_RING_INNER_RADIUS
+	global_position = GroundProjection.clamp_to_ring(Arena.ARENA_CENTER, global_position, Arena.BOSS_RING_INNER_RADIUS, Arena.ARENA_RADIUS)
 
 ## 位置純粹是 track_angle 的函式（固定半徑 Arena.BOSS_TRACK_RADIUS），track_angle 本身不在這裡
 ## 自己累加——由 Boss._sync_clone_formation() 每幀寫入「本體角度+固定偏移」，本體角度持續增加，
 ## 這裡跟著平滑移動，不需要自己的計時/追趕邏輯。
 func _process_patrol() -> void:
-	global_position = Arena.ARENA_CENTER + Vector2(cos(track_angle), sin(track_angle)) * Arena.BOSS_TRACK_RADIUS
+	global_position = GroundProjection.ellipse_point(Arena.ARENA_CENTER, Arena.BOSS_TRACK_RADIUS, track_angle)
 
 func _draw() -> void:
-	Boss._draw_boss_body(self, hp, MAX_HP, flash_timer, squash, idle_bob)
+	Boss._draw_boss_body(self, flash_timer, squash, idle_bob)
 	# 跟 Boss._draw() 的讀氣光環畫法完全一樣（同一段程式碼複製一份，不是呼叫共用函式，
 	# 跟整個檔案「視覺共用、程式碼各自一份」的慣例一致）——差別只在這裡是「假裝」讀氣，
 	# 不是真的在倒數 channel_timer。

@@ -14,8 +14,7 @@ const FLY_SPEED := 420.0
 const HEAD_OFFSET := Vector2(0, -50)
 const IMPACT_RADIUS := 95.0
 ## 3/4視角風格：落點預告是貼在地上的範圍，要跟角色陰影/MagicFX爆炸特效同一套「壓扁成橢圓」
-## 視覺語言，不是正圓——跟 AoETargetingReticle.gd 的 GROUND_SQUASH 保持一致的壓扁比例。
-const GROUND_SQUASH := 0.5
+## 視覺語言，不是正圓——壓扁係數統一讀 GroundProjection.squash（集中管理）。
 
 enum Phase { TELEGRAPH, FLYING }
 
@@ -83,32 +82,21 @@ func _find_player() -> Node2D:
 		return null
 	return players[0]
 
-## 傷害判定要跟畫出來的範圍預告一致——預告是壓扁成橢圓畫的（GROUND_SQUASH），但命中判定
-## 之前還是用 distance_to() <= IMPACT_RADIUS 這種正圓算法，兩者對不上：玩家站在橢圓外面但
-## 正圓範圍內的地方（例如落點正上方/正下方，y方向因為壓扁比x方向窄很多）照理說不該中，
-## 卻因為判定還是正圓而被打到。用跟繪圖同一個比例去正規化座標再檢查距離，確保「畫出來的範圍」
-## 跟「真的會受傷的範圍」是同一塊。
+## 傷害判定要跟畫出來的範圍預告一致——預告是壓扁成橢圓畫的，命中判定也要用同一個比例換算，
+## 不能直接用 distance_to() <= IMPACT_RADIUS 這種正圓算法，不然玩家站在橢圓外面但正圓範圍內
+## 的地方（例如落點正上方/正下方，y方向因為壓扁比x方向窄很多）照理說不該中，卻會被打到。
+## 這支腳本當初是最早發現/修掉這個落差的地方，現在統一改呼叫 GroundProjection（集中管理），
+## 邏輯完全等價，只是不用自己重算一次。
 func _is_inside_impact_ellipse(point: Vector2) -> bool:
-	var offset: Vector2 = point - target_pos
-	var nx: float = offset.x / IMPACT_RADIUS
-	var ny: float = offset.y / (IMPACT_RADIUS * GROUND_SQUASH)
-	return nx * nx + ny * ny <= 1.0
+	return GroundProjection.projected_distance(point, target_pos) <= IMPACT_RADIUS
 
-## 貼地範圍預告用的橢圓（填色多邊形版），跟 AoETargetingReticle._draw_ground_ellipse() 同一種
-## 「cos/sin 乘不同半徑湊橢圓」手法，這裡額外需要填色（不只是描邊），所以用 draw_colored_polygon。
+## 貼地範圍預告用的橢圓，頂點座標統一呼叫 GroundProjection.ellipse_points()（集中管理，見
+## 該函式註解）。填色版（fill）額外需要 draw_colored_polygon，outline 版只描邊。
 func _draw_ground_ellipse_fill(center: Vector2, radius: float, color: Color) -> void:
-	var points := PackedVector2Array()
-	for i in range(32):
-		var a: float = TAU * float(i) / 32.0
-		points.append(center + Vector2(cos(a) * radius, sin(a) * radius * GROUND_SQUASH))
-	draw_colored_polygon(points, color)
+	draw_colored_polygon(GroundProjection.ellipse_points(center, radius, 32), color)
 
 func _draw_ground_ellipse_outline(center: Vector2, radius: float, color: Color, width: float) -> void:
-	var points := PackedVector2Array()
-	for i in range(65):
-		var a: float = TAU * float(i) / 64.0
-		points.append(center + Vector2(cos(a) * radius, sin(a) * radius * GROUND_SQUASH))
-	draw_polyline(points, color, width, true)
+	draw_polyline(GroundProjection.ellipse_points(center, radius), color, width, true)
 
 func _draw() -> void:
 	match phase:

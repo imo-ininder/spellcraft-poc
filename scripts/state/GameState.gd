@@ -12,6 +12,7 @@ const CATALOG: Array[String] = [
 	"res://resources/spells/LightningBolt.tres",
 	"res://resources/spells/Invisibility.tres",
 	"res://resources/spells/SpeedBoost.tres",
+	"res://resources/spells/MagicMissile.tres",
 ]
 
 ## 玩家在大廳選好、要帶上戰場的法術。戰鬥場景（Player.gd）讀這份清單；大廳（Lobby.gd）負責寫入。
@@ -19,34 +20,27 @@ const CATALOG: Array[String] = [
 ## 讓直接在 editor 開 Main.tscn 測試的工作流程不會因為跳過大廳而壞掉。
 var equipped_spells: Array[Spell] = []
 
-## 每把法術的代表色，跟遊戲裡的特效色保持一致（火球=橘、力場波=紫、雷電箭=電光藍、
-## 隱形術=灰藍、速度提升=黃綠——後兩個刻意不跟 DEMO_GOALS.md §6 的「吟唱速度加快=青」撞色，
-## 那是超魔專長的顏色語意，不是法術身分色，兩套顏色系統各自獨立，沒有要對應）。
-## 集中放這裡是因為輪盤（SpellWheel）跟大廳的格子視覺化（SlotGrid）都需要同一套顏色，
-## 不要兩邊各存一份，之後顏色對不上會很難追。按 CATALOG 的順序對應。
-const SPELL_COLORS := [
-	Color(1, 0.5, 0.15),
-	Color(0.75, 0.55, 1.0),
-	Color(0.3, 0.9, 1.0),
-	Color(0.55, 0.6, 0.75),
-	Color(0.6, 1.0, 0.4),
-]
-
-func color_for(spell: Spell) -> Color:
-	var idx := CATALOG.find(spell.resource_path)
-	if idx == -1:
-		return Color.WHITE
-	return SPELL_COLORS[idx % SPELL_COLORS.size()]
-
 ## 超魔專長組合表：按鍵序列 -> 效果。序列越長/越難打，效果越強。角色天生就會全部，Demo 階段固定不解鎖。
 ## 放在 GameState 而不是 Player.gd：大廳的超魔專長一覽分頁（唯讀說明）需要讀這份表，但大廳沒有
-## Player 實例，不該伸手進另一個場景的腳本內部常數——跟 CATALOG/SPELL_COLORS 一樣是跨場景共用資料。
+## Player 實例，不該伸手進另一個場景的腳本內部常數——跟 CATALOG 一樣是跨場景共用資料。
 const ARCANE_FEATS := {
 	"UU": {"label": "+傷害", "color": Color(1, 0.3, 0.3), "damage_mult": 0.5},
 	"UDU": {"label": "+強力傷害", "color": Color(1, 0.1, 0.6), "damage_mult": 1.2},
 	"UULR": {"label": "+終極爆發", "color": Color(1, 0.8, 0.1), "damage_mult": 1.8},
 	"RR": {"label": "+吟唱速度", "color": Color(0.2, 0.9, 1.0), "cast_speed_bonus": 0.5},
 	"LL": {"label": "-吟唱速度", "color": Color(0.5, 0.4, 0.8), "cast_speed_bonus": -0.5},
+	## 以下 4 個是數值縮放類超魔專長（2026-10-11 新增）：按鍵序列是佔位用的，使用者明確說這次
+	## 先不決定最終按鍵——選不會跟上面既有序列前綴衝突的 D 開頭序列（現有序列沒有任何一個以
+	## D 開頭），之後要改最終按鍵只改這裡的 key 字串即可。不給 color，_commit_combo() 有
+	## feat.get("color", Color.WHITE) 的 fallback。縮放邏輯見 Player.gd:_apply_scaling_feats()。
+	"DD": {"label": "法術強效", "potency_mult": 1.5}, # 效果文數值（傷害區間/buff強度）×1.5後floor
+	"DL": {"label": "法術增遠", "range_mult": 1.5}, # max_range ×1.5
+	"DR": {"label": "法術擴展", "radius_mult": 1.5}, # 半徑 ×1.5
+	"DU": {"label": "法術極效", "maximize": true}, # 隨機區間一律取最大值
+	## 2026-10-12 新增：共用上面同一套「原地放大這次施放的法術數值」慣例，按鍵序列一樣是佔位
+	## （DD開頭，跟法術強效共用前綴，比照 UU/UULR 既有的前綴共用模式）。
+	"DDL": {"label": "法術延時", "duration_mult": 2.0}, # 持續時間（buff類效果的 duration）×2
+	"DDR": {"label": "法術迴響", "echo": true}, # 整把法術完整重放一次，見 Player.gd:_fire_spell()
 }
 
 func get_catalog() -> Array[Spell]:

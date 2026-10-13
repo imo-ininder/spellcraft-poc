@@ -2,7 +2,7 @@ extends Node2D
 
 @onready var player := $Player
 @onready var boss := $Boss
-@onready var cast_bar: ProgressBar = $UI/CastBar
+@onready var cast_bar: CastBar = $UI/CastBar
 @onready var feat_container: HBoxContainer = $UI/FeatContainer
 @onready var combo_label: Label = $UI/ComboLabel
 @onready var cd_bar: ProgressBar = $UI/CDBar
@@ -10,6 +10,9 @@ extends Node2D
 @onready var spell_wheel: SpellWheel = $UI/SpellWheel
 @onready var debug_bg: ColorRect = $UI/DebugBg
 @onready var debug_label: Label = $UI/DebugLabel
+@onready var health_orb: HealthOrb = $UI/HealthOrb
+@onready var death_screen: DeathScreen = $UI/DeathScreen
+@onready var boss_health_bar: BossHealthBar = $UI/BossHealthBar
 
 ## 開發用除錯面板：按 F3 切換，預設關閉（不要讓一般遊玩畫面一直有一大塊文字）。這個鍵刻意
 ## 不走 Input Map，直接用 is_physical_key_pressed() 判斷——跟 Ctrl 輪盤同樣理由（見
@@ -25,8 +28,11 @@ const BOSS_STATE_NAMES := ["IDLE", "CLONE_SUMMON_BUFFER", "CASTING_CLONE_SUMMON"
 const BOSS_ATTACK_NAMES := ["FIREBALL", "ORB_BARRAGE"]
 
 func _ready() -> void:
+	cast_bar.bind(player)
+	health_orb.bind(player)
+	death_screen.bind(player)
+	boss_health_bar.bind(boss)
 	player.cast_started.connect(_on_cast_started)
-	player.cast_progress.connect(_on_cast_progress)
 	player.cast_ended.connect(_on_cast_ended)
 	player.feat_added.connect(_on_feat_added)
 	player.combo_failed.connect(_on_combo_failed)
@@ -34,7 +40,6 @@ func _ready() -> void:
 	player.spell_wheel_opened.connect(_on_wheel_opened)
 	player.spell_wheel_hover_changed.connect(_on_wheel_hover_changed)
 	player.spell_wheel_closed.connect(_on_wheel_closed)
-	cast_bar.visible = false
 	combo_label.text = ""
 	cd_label.text = "右鍵CD: 就緒"
 
@@ -47,19 +52,15 @@ func _on_wheel_hover_changed(index: int) -> void:
 func _on_wheel_closed(_selected_index: int) -> void:
 	spell_wheel.close()
 
+## 讀條本身（進度/倒數秒數）由 cast_bar.bind(player) 自己處理，見 scripts/ui/CastBar.gd——
+## 這裡只負責跟讀條無關的部分（清掉舊的超魔專長圖示、更新提示文字）。
 func _on_cast_started() -> void:
-	cast_bar.visible = true
-	cast_bar.value = 0
 	for child in feat_container.get_children():
 		child.queue_free()
 	combo_label.text = "吟唱中... WASD 輸入超魔專長"
 	combo_label.modulate = Color(1, 1, 1)
 
-func _on_cast_progress(ratio: float) -> void:
-	cast_bar.value = ratio * 100
-
 func _on_cast_ended() -> void:
-	cast_bar.visible = false
 	combo_label.text = ""
 
 func _on_feat_added(feat_data) -> void:

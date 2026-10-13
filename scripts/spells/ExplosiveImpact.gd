@@ -7,8 +7,17 @@ extends ProjectileImpact
 func resolve(projectile: Node, body: Node) -> bool:
 	var point: Vector2 = body.global_position if body != null else projectile.global_position
 	for target in projectile.get_tree().get_nodes_in_group("enemies"):
-		if target.has_method("take_damage") and target.global_position.distance_to(point) <= radius:
+		if target.has_method("take_damage") and GroundProjection.projected_distance(target.global_position, point) <= radius:
 			target.take_damage(projectile.damage)
 	MagicFX.spawn_burst(projectile.get_parent(), point, Color(1, 0.5, 0.1), 28, 260.0)
 	MagicFX.spawn_explosion_ring(projectile.get_parent(), point, radius, Color(1, 0.35, 0.1))
 	return true
+
+func scale_radius(mult: float) -> void:
+	radius *= mult
+
+func has_scalable_radius() -> bool:
+	return true
+
+func get_radius() -> float:
+	return radius

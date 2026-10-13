@@ -62,6 +62,17 @@
 
 `cast_speed_bonus = 1.0`（+100%）時長變成一半。逐 frame 消耗寫成 `cast_timer -= delta * (1 + cast_speed_bonus)`（消耗速率跟時長互為倒數）。`cast_speed_bonus` 下限 clamp 在 `-0.9`，避免疊加多個減速效果讓 `(1+cast_speed_bonus)` 碰到 0 或負數。
 
+**2026-10-11：讀條元件抽成 `scenes/ui/CastBar.tscn`＋`scripts/ui/CastBar.gd`（`class_name CastBar`）**——進度條＋倒數秒數文字（`"%.2fs"`，顯示的是「照目前施法速度實際還剩幾秒」：`(1-ratio)*cast_time / (1+cast_speed_bonus)`，不是法術固定的基礎秒數，`RR`/`LL` 中途觸發時數字會直接跳到新速度算出來的值）。`Main.tscn`（正式戰鬥）／`scenes/SpellTestRange.tscn`（法術測試場）都用 `instance=` 掛同一個場景，呼叫端只要在 `_ready()` 呼叫一次 `cast_bar.bind(player)`。這個元件**刻意不**套用專案裡「行為共用、程式碼各自複製」的慣例（那套慣例是給 `_find_player()` 這種極小、極穩定、幾乎不會再改的工具函式用的）——讀條的呈現邏輯會持續被調整，一開始各自複製了一份，兩邊很快就對不上，所以改成共用場景。之後要調整讀條的呈現方式，只要改 `CastBar.gd` 這一個檔案。
+
+**2026-10-12：`CastPreview.gd`（吟唱中的範圍預覽）／`AoETargetingReticle.gd`（選點確認介面）改掛在 `scenes/entities/Player.tscn` 底下，不再掛在 `Main.tscn`／`SpellTestRange.tscn` 場景根層級**——背景：`CastPreview.gd` 最初只接進 `SpellTestRange.tscn`，忘了同步接進 `Main.tscn`，導致正式戰鬥完全沒有這個功能，被使用者抓到；當下的補救是在 `Main.tscn` 也手動加一份節點＋`bind()`，但使用者追問「每開一個 tscn 就要重新檢查一次？」，指出這只是治標（靠人記得檢查），沒解決「這兩個場景各自維護一份幾乎一樣的節點配置＋綁定程式碼」這個根本的復用性問題。
+
+既然 `Player.tscn` 本身就已經是兩個場景共用的可重用場景（`instance=ExtResource(...)`），`CastPreview`/`AoETargetingReticle` 這類「純粹跟著施法者本人走、不依賴場景其他結構」的節點，改成直接掛在 `Player.tscn` 底下，任何用到 `Player.tscn` 的場景自動帶有這個功能，不需要每個場景各自手動補節點／各寫一行 `bind()`——少一個環節，就少一種「忘記接」的方式，不是靠記憶體/checklist 去防止忘記。具體改動：
+- 兩個腳本都拿掉外部 `bind(player)` API，改成 `_ready()` 裡 `player = get_parent()`／`caster` 直接是自己的父節點。
+- `_draw()` 原本直接拿 `global_position` 當畫圖座標（因為以前掛在場景根層級、原點跟世界座標原點重合），現在原點跟著 Player 移動，所有畫圖座標要先 `to_local()` 轉換。
+- `AoETargetingDelivery.fire()` 原本用 `caster.get_tree().current_scene.get_node("AoETargetingReticle")` 這種寫死節點名稱＋假設場景結構的方式找選點介面，改成 `caster.get_node("AoETargetingReticle")`（`caster` 就是施法的 Player，這個節點現在是它的直屬子節點）——連「場景根層級必須剛好有一個這個名字的節點」這個隱性假設也一併拿掉。
+
+**判斷準則**：一個支援性節點該掛在 `Player.tscn` 底下、還是掛在場景根層級，看它是「跟著某個特定施法者走的個體行為/視覺」還是「跟場景佈局相關的 HUD」。`CastPreview`/`AoETargetingReticle` 是前者（純世界座標、只服務這一個 Player）；`CastBar` 是後者（`CanvasLayer` 底下的 UI 元件，位置/排版兩個場景目前故意不同，見上一條記錄），所以 `CastBar` 維持場景各自 `instance=` 掛一份、不跟著搬進 `Player.tscn`，不是這次漏掉。
+
 ---
 
 ## 2. 法術格系統與大廳
@@ -72,7 +83,6 @@
 ### 2.2 GameState（autoload 單例，`scripts/state/GameState.gd`）
 - `TOTAL_SLOTS = 6`。
 - `CATALOG`：法術 `.tres` 路徑總表，新增法術只需要改這裡，大廳跟輪盤都會自動反映。
-- `SPELL_COLORS`：每把法術的代表色，按 `CATALOG` 順序對應，輪盤跟大廳格子視覺化共用。
 - `ARCANE_FEATS`：超魔專長組合表，`Player.gd` 跟大廳的超魔專長一覽分頁都讀這份表。
 - `equipped_spells`：大廳勾選結果，`Lobby.gd` 按「出發」時寫入，`Player.gd:_ready()` 讀取。
 - `default_loadout()`：`equipped_spells` 為空時的 fallback，依 `CATALOG` 順序貪婪塞滿 6 格、塞不下的法術跳過——讓不經大廳直接開 `Main.tscn` 測試的工作流程不受影響。
@@ -102,9 +112,19 @@
 `AoETargetingDelivery` 施放時觸發，畫在世界座標（施法者周圍的 `max_range` 邊界淡圈、落點範圍預覽圈），用 `get_tree().paused = true` 做真正的暫停（跟輪盤的子彈時間不同），節點本身 `process_mode = PROCESS_MODE_ALWAYS` 才能在暫停時繼續運作。左鍵確認、右鍵或 Esc 取消；滑鼠超出 `max_range` 時指示圈鎖在邊界並變灰。
 
 ### 3.4 基礎 Dash
-空白鍵觸發，不走 `Spell`/`SpellDelivery` 架構、不佔用法術欄位、沒有冷卻。方向取按下當下的 WASD（跟滑鼠瞄準方向無關），站著不動時用 `last_move_direction`（上一次有實際移動輸入的方向）。`DASH_DURATION`（0.12秒）內用 `DASH_SPEED`（1800 px/s）持續呼叫 `move_and_slide()`，會自然貼牆滑行、碰到牆就停下，不是瞬移。吟唱中、輪盤開啟、衝刺進行中都不會觸發/疊加。
+空白鍵觸發，不走 `Spell`/`SpellDelivery` 架構、不佔用法術欄位、沒有冷卻。方向取按下當下的 WASD（跟滑鼠瞄準方向無關），站著不動時用 `last_move_direction`（上一次有實際移動輸入的方向）。`DASH_DURATION`（0.12秒）內用 `DASH_SPEED` 持續呼叫 `move_and_slide()`，會自然貼牆滑行、碰到牆就停下，不是瞬移。`DASH_SPEED` 直接用 `50.0 / DASH_DURATION` 算（2026-10-12 使用者要求衝刺距離改成 50px，原本約220px），數值本身就是「50px」這個意圖，不是另外存一個容易跟 `DASH_DURATION` 脫鉤的獨立常數。吟唱中、輪盤開啟、衝刺進行中都不會觸發/疊加。
 
 目前只有這個基礎分支——裝備位移類法術時改走 `AoETargetingDelivery` 選點移動施法者座標的分支尚未有對應法術可驗證。
+
+### 3.5 玩家 HP／死亡（2026-10-12 新增，2026-10-12 當天又修正一輪）
+
+**範圍明確只包含玩家這一側**——使用者實測討論後確認：Boss 本體血量歸零維持原本「重置滿血」的佔位行為不動（分身的 3HP 是例外，本來就是真的會消失），這次不處理。
+
+- `Player.gd`：`const MAX_HP := 100.0`／`var hp`／`var is_dead`，跟 `Boss.gd`/`TestDummy.gd` 同一套既有慣例（`take_damage(amount)` 直接扣血、clamp 在 0、`hp_changed(ratio)` 訊號給 UI）。`take_damage()` 血量歸零時呼叫 `_die()`：設 `is_dead = true`、停止吟唱/衝刺/移動、emit `died` 訊號——**不**比照 Boss 重置滿血，這是玩家真正的死亡。`_physics_process()`/`_input()` 開頭都加了 `if is_dead: return`，死亡後整個不再回應任何輸入（移動、吟唱、瞬發、Dash、輪盤全部停）。
+- `scripts/ui/HealthOrb.gd`＋`scenes/ui/HealthOrb.tscn`：使用者明確要求 PoE/暗黑那種「液體填充圓球」視覺風格，不是進度條。**第一版用 `_draw()` 手刻圓弧弓形多邊形＋sine 波液面起伏，使用者實測後要求拿掉波動（血量沒變時不該有任何浮動效果，會讓人誤以為血量在變動），並且考慮到之後會換成美術素材，要求改用真的材質測試整條管線**——改版後用 `TextureProgressBar`（`fill_mode = FILL_BOTTOM_TO_TOP`、`nine_patch_stretch = true` 讓材質自動縮放填滿容器，不管以後真的美術素材尺寸是多少都不用改程式）取代手刻多邊形，液體從下往上淹沒的效果完全靠裁切材質本身做出來，不自己算幾何、不加任何動畫——液面只在 `hp_changed` 訊號真的觸發時才會變化。`texture_under`／`texture_progress` 共用同一張圖（`art/ui/health_orb_fill.png`，一張純紅色實心圓形 PNG，純粹拿來測試材質管線，之後要換真的美術素材只要換掉這張圖，不用動程式碼），只是 `tint_under` 調暗代表「空血」的底色。只做血量這一顆，使用者明確說「不用對稱，單邊就好了」——不加魔力/資源球，這個專案目前也沒有資源系統。跟 `CastBar.gd` 同一個「呼叫端 `bind(player)` 一次、自動訂閱訊號」的共用元件模式，`Main.tscn` 的 `UI` CanvasLayer 左下角掛一份。
+- `scripts/ui/DeathScreen.gd`＋`scenes/ui/DeathScreen.tscn`：監聽 `player.died`，顯示半透明黑底＋按鈕，同時 `get_tree().paused = true`（玩家已經死了，背景不該讓 Boss 繼續出招）。**第一版有「你死了」大字＋「重試」按鈕（重試＝`reload_current_scene()` 原地重來）；使用者實測後要求拿掉文字、按鈕改成「回大廳」**——`_on_lobby_pressed()` 改用 `get_tree().change_scene_to_file("res://scenes/Lobby.tscn")`，死亡後直接回到裝備配置畫面重新出發，不是原地重來一場一樣的戰鬥。這個節點＋按鈕都要 `process_mode = PROCESS_MODE_ALWAYS` 才能在暫停時仍然接收點擊，跟 `AoETargetingReticle.gd` 同樣理由。已驗證過：死亡畫面正確顯示（無文字、只有按鈕）、按下後正確切回 Lobby。
+
+**踩到的環境雷：外部腳本新增的圖片資源，Godot 編輯器不會自動匯入，需要用 `editor_refresh` 不帶路徑參數（觸發全專案掃描，不是只傳 `file_paths` 的 O(1) 單檔模式）才會真的產生 `.import` 檔案；而且就算匯入完成，已經在跑的遊戲 session 讀到的還是舊的（`texture_progress` 等欄位是 `null`），要 `game_stop`+`game_start` 重開一次遊戲才會讀到剛匯入好的資源。**跟 `CLAUDE.md`「已知環境雷」記錄的「新增 `class_name` 腳本要先匯入」同一類問題，只是這次是圖片資源，觸發匯入的方式也不同（不是 `--headless --import`，是 `editor_refresh` 全掃描）。
 
 ---
 
@@ -123,10 +143,12 @@ boss 固定巡邏軌道半徑 `BOSS_TRACK_RADIUS = (BOSS_RING_INNER_RADIUS + ARE
 
 玩家與 boss 物理上永遠碰不到面，所有互動只能靠法術隔空進行。完整的 boss 走位/招式機制見 `BOSS_DESIGN.md`。
 
-### 4.2 碰撞與反彈
-牆壁碰撞只圍 `PLAYER_ZONE_RADIUS`：`CollisionPolygon2D`（`build_mode = BUILD_SEGMENTS`，約48點描出圓）。boss/分身不走物理碰撞（手動控制 `global_position`，`collision_mask=0`），靠自身巡邏公式與邊界夾限維持在環道內。
+**2026-10-12：場地整個改成壓扁橢圓（套 `GroundProjection.squash`），不再是正圓**——之前（見 §5.1）場地圍牆/boss巡邏軌道刻意維持正圓，只有範圍判定/視覺指示套壓扁，使用者這次明確要求場地本身也要跟著壓扁，不要「正圓場地裡包一堆橢圓範圍指示」這種不協調的組合。所有半徑常數（`PLAYER_ZONE_RADIUS`/`BOSS_RING_INNER_RADIUS`/`ARENA_RADIUS`/`BOSS_TRACK_RADIUS`）數值本身不變，只是「半徑」的詮釋從正圓改成橢圓長軸——`GroundProjection.ellipse_point(center, radius, angle)` 給「角度→橢圓上座標」用（boss巡邏/分身出生位置），`GroundProjection.clamp_to_ring(from, to, min, max)` 給「環狀邊界夾限」用（boss被擊退飄出環道時夾回來）。
 
-`SpellProjectile.gd` 的牆壁反彈（`bounces_off_walls=true` 的 delivery，目前只有雷電箭）不用物理碰撞：比較投射物到 `ARENA_CENTER` 的距離跟 `PLAYER_ZONE_RADIUS`（玩家自己的場地邊界，不是 boss 環道的 `ARENA_RADIUS`），超出範圍時用圓心到投射物的偏移向量當法線、`Vector2.bounce(normal)` 處理反射。
+### 4.2 碰撞與反彈
+牆壁碰撞只圍 `PLAYER_ZONE_RADIUS`：`CollisionPolygon2D`（`scripts/core/PlayerZoneWall.gd`，2026-10-12 起在 `_ready()` 用 `GroundProjection.ellipse_points()` 動態產生橢圓頂點，取代原本寫死在 `.tscn` 裡的 48 點正圓座標——這樣以後調整 `PLAYER_ZONE_RADIUS` 或 `squash` 係數，牆壁碰撞形狀會自動跟著變）。boss/分身不走物理碰撞（手動控制 `global_position`，`collision_mask=0`），靠自身巡邏公式與邊界夾限維持在環道內。
+
+`SpellProjectile.gd` 的牆壁反彈（`bounces_off_walls=true` 的 delivery，目前只有雷電箭）不用物理碰撞：比較投射物到 `ARENA_CENTER` 的壓扁距離（`GroundProjection.projected_distance()`）跟 `PLAYER_ZONE_RADIUS`，超出範圍時用 `GroundProjection.clamp_to_radius()` 夾回橢圓邊界上，反彈法線改用 `GroundProjection.ellipse_normal()` 算真正的橢圓法線（**不能**用「圓心→該點」方向，那是正圓公式，橢圓上任一點的法線方向跟半徑方向不同，用正圓公式會讓反彈角度肉眼可見地不對）。
 
 ---
 
@@ -142,10 +164,16 @@ Magicka 調性：Q 版、鮮豔、誇張特效的奇幻風格。全部用 Godot 
 
 角色不用 `look_at()` 連續旋轉，只用 `facing_right`（滑鼠在角色左/右的布林值）決定法杖畫在哪一側（x 座標鏡射），角色本身固定朝下。
 
-地板磚塊、爆炸特效、範圍選取圈也延伸同一套「有高度感」語言但不做真投影：磚塊加「左上亮、右下暗」浮雕邊線模擬厚度；`MagicFX.gd` 的爆炸/範圍特效套 `GROUND_SQUASH = 0.5` 常數壓扁成橢圓（`Node2D.scale` 或手動橢圓多邊形，依節點是否能直接套 scale 而定）；圓形牆壁本身不改橢圓（要跟實際碰撞形狀一致），用內緣亮邊/外緣暗邊模擬牆體高度。
+地板磚塊、爆炸特效、範圍選取圈也延伸同一套「有高度感」語言但不做真投影：磚塊加「左上亮、右下暗」浮雕邊線模擬厚度；爆炸/範圍特效壓扁成橢圓，壓扁係數跟判定邏輯統一讀 `scripts/core/GroundProjection.gd`（`class_name GroundProjection`，見下方說明），不再各檔案各放一份 `GROUND_SQUASH` 常數。
+
+**2026-10-11：補上「視覺壓扁」跟「判定範圍」對不上的修正，新增 `GroundProjection`**——`scenes/SpellTestRange.tscn` 這個測試場（同心圓參考線）上線後，發現範圍判定邏輯全部還是用沒壓縮的正圓（`AoETargetingReticle.gd` 的滑鼠選點夾限、`AoETargetingDelivery.gd`/`ExplosiveImpact.gd`/`SelfDelivery.gd` 的命中判定、`HomingMissile.gd`/`HomingMissileDelivery.gd` 的鎖定範圍、`Boss.gd` 吸引扇形觸發/脫離距離、`BossOrb.gd` 命中半徑、`BossSuctionZone.gd` 扇形距離分量），視覺畫的是橢圓、判定卻是正圓。已修：
+- 新增 `GroundProjection.squash`（集中管理壓扁係數，取代各檔案各自的 `GROUND_SQUASH`）、`GroundProjection.projected_distance()`（Y方向差距除以 squash 再算距離，取代上述所有範圍判定的 `distance_to()`/`.length()`）。
+- `Player.gd` 的 `_process_movement()` 改用 `GroundProjection.projected_velocity()`：上下方向移動的世界座標速度乘上 `squash`（變慢）——因為 `projected_distance()` 讓上下方向判定範圍天生比左右方向更容易進入（Y差距影響力被放大），移動速度對應變慢才能讓「走進某個範圍要花多久」不管從哪個方向接近都一致。
+- **刻意不動**：碰撞形狀（`CircleShape2D` 全部維持圓形，範圍判定是程式碼手動算距離、碰撞是 Godot 物理引擎的實際形狀重疊，兩者是不同機制，碰撞形狀這些都很小、沒必要冒多邊形橢圓近似的複雜度/效能風險）；Dash/Knockback（瞬間物理反饋，不套這個系統）。
+- **場地圓形圍牆／boss固定巡邏半徑／`SpellProjectile` 牆壁反彈這三項，當時刻意維持正圓（跟實際碰撞形狀一致），2026-10-12 已經依使用者要求補做（場地整個改成壓扁橢圓），見 §4.1／§4.2。
 
 ### 5.2 共用特效（`MagicFX.gd`）
-`class_name MagicFX`，提供三個 static 工具方法：`spawn_burst()`（爆發粒子）、`make_sparkle_trail()`（拖尾粒子，不套 `GROUND_SQUASH`，軌跡在空中飛不需要壓扁）、`spawn_explosion_ring()`（範圍特效用的擴張淡出圈）。
+`class_name MagicFX`，提供三個 static 工具方法：`spawn_burst()`（爆發粒子）、`make_sparkle_trail()`（拖尾粒子，不套壓扁，軌跡在空中飛不需要壓扁）、`spawn_explosion_ring()`（範圍特效用的擴張淡出圈）。壓扁係數讀 `GroundProjection.squash`（見 §5.1）。
 
 ### 5.3 解析度
 `project.godot`：`viewport_width/height = 1280x720`（設計基準解析度），`stretch/mode = "canvas_items"`，`stretch/aspect = "keep"`。FHD(1920x1080)／2K(2560x1440)／4K(3840x2160) 都是同樣 16:9，畫面等比例縮放貼合視窗。
@@ -161,10 +189,11 @@ spellcraft-poc/
 │   ├── Lobby.tscn                      # 大廳：法術格配置畫面，啟動場景
 │   ├── Main.tscn                       # 戰鬥場景：Arena、Player、Boss、選點介面、UI（吟唱條/專長列/CD條/輪盤/除錯面板）
 │   ├── entities/
-│   │   ├── Player.tscn                 # CharacterBody2D + CollisionShape2D + Camera2D
+│   │   ├── Player.tscn                 # CharacterBody2D + CollisionShape2D + Camera2D + CastPreview + AoETargetingReticle（後兩者掛在這裡，不是掛在 Main.tscn/SpellTestRange.tscn 根層級，任何用到這個場景的地方自動帶有吟唱預覽/AoE選點功能，見 §1.7）
 │   │   └── boss/                       # Boss.tscn／BossClone.tscn／BossFireball.tscn／BossOrb.tscn／BossSuctionZone.tscn（見 BOSS_DESIGN.md）
 │   └── spells/
-│       └── SpellProjectile.tscn        # 投射物類法術共用場景
+│       ├── SpellProjectile.tscn        # 直線投射物共用場景
+│       └── HomingMissile.tscn          # 追蹤飛彈共用場景（魔法飛彈用）
 ├── scripts/
 │   ├── Main.gd                         # UI 綁定 + 開發用除錯面板（F3）
 │   ├── Lobby.gd                        # 大廳邏輯：格數預算檢查、分頁切換、法術說明顯示、輪盤排序
@@ -190,18 +219,21 @@ spellcraft-poc/
 │       ├── SelfDelivery.gd             # 以施法者為中心對周圍敵人造成範圍傷害
 │       ├── SelfBuffDelivery.gd         # 效果套用在施法者自己身上（buff類法術）
 │       ├── AoETargetingDelivery.gd     # 鎖定選點的範圍傷害
+│       ├── HomingMissileDelivery.gd    # 自動鎖定目標、依序發射的追蹤飛彈
 │       ├── ProjectileImpact.gd         # 投射物命中/飛行耗盡後行為變體基底
 │       ├── SingleHitImpact.gd / ExplosiveImpact.gd / PiercingImpact.gd
 │       ├── SpellEffect.gd              # 命中/疊加效果基底（INSTANT/DURATION）
 │       ├── DamageEffect.gd / InvisibilityEffect.gd / SpeedBuffEffect.gd
-│       └── SpellProjectile.gd          # 投射物飛行、碰撞傷害、拖尾特效
+│       ├── SpellProjectile.gd          # 直線投射物飛行、碰撞傷害、拖尾特效
+│       └── HomingMissile.gd            # 追蹤飛彈：恆速轉向導引、碰撞傷害、拖尾特效
 └── resources/
     └── spells/
         ├── Fireball.tres               # AoETargetingDelivery，slot_cost=3
         ├── ForceWave.tres              # SelfDelivery，slot_cost=2
         ├── LightningBolt.tres          # ProjectileDelivery + PiercingImpact + 牆壁反彈，slot_cost=1
         ├── Invisibility.tres           # SelfBuffDelivery + InvisibilityEffect，slot_cost=2
-        └── SpeedBoost.tres             # SelfBuffDelivery + SpeedBuffEffect，slot_cost=1
+        ├── SpeedBoost.tres             # SelfBuffDelivery + SpeedBuffEffect，slot_cost=1
+        └── MagicMissile.tres           # HomingMissileDelivery + SingleHitImpact，slot_cost=1
 ```
 
 法術系統架構的完整欄位/類別說明記錄在 `SPELL_SYSTEM.md`，不重複寫在這裡。

@@ -6,9 +6,9 @@
 
 ## 1. 美術現狀
 
-專案目前沒有任何圖片類美術資源（沒有 `.png`/`.svg`、沒有 `Sprite2D`/`AnimatedSprite2D`），所有視覺呈現都是用 Godot 的 `_draw()` 即時繪製幾何圖形（三角形、圓形、多邊形），搭配 `CPUParticles2D` 做動態粒子效果，沒有幀數動畫系統。
+**2026-10-12 更新：玩家角色已經是第一個真正落地的例外**，見 §2.1a。其餘角色/怪物/場地/特效/UI 仍然沒有任何圖片類美術資源，全部用 Godot 的 `_draw()` 即時繪製幾何圖形（三角形、圓形、多邊形），搭配 `CPUParticles2D` 做動態粒子效果，沒有幀數動畫系統。
 
-遊戲邏輯（狀態機、傷害計算、超魔專長判定）跟繪圖呼叫（`_draw()`）在程式碼結構上是分離的——邏輯只負責改變數值變數（`is_casting`、`squash`、`hat_bob`...），`_draw()` 只負責讀這些變數畫圖。這代表替換美術資源時原則上不需要碰邏輯部分，只需要替換/刪除各檔案的 `_draw()` 內容。
+遊戲邏輯（狀態機、傷害計算、超魔專長判定）跟繪圖呼叫（`_draw()`）在程式碼結構上是分離的——邏輯只負責改變數值變數（`is_casting`、`squash`...），`_draw()` 只負責讀這些變數畫圖。這代表替換美術資源時原則上不需要碰邏輯部分，只需要替換/刪除各檔案的 `_draw()` 內容——玩家角色這次的遷移就是這個分離設計的第一次實戰驗證，`Player.gd` 的狀態機/輸入/法術發射邏輯完全沒動，只動了繪製那一層。
 
 ---
 
@@ -18,12 +18,25 @@
 
 | 檔案 | 目前程式繪圖內容 | 建議換成 | 遷移方式 |
 |---|---|---|---|
-| `scripts/entities/Player.gd` | 三角長袍+尖帽+法杖，`robe_color`/`glow_color`/`hat_bob`/`cast_pulse` 等變數驅動繪製 | `AnimatedSprite2D`，含 Idle/Move/Cast/Hit 等動畫狀態 | `CharacterBody2D` 底下加一個 `AnimatedSprite2D` 子節點；在對應的狀態切換處（`_start_casting`/`_cancel_casting`/`take_damage`等）呼叫對應動畫，取代目前靠變數在 `_draw()` 裡算顏色/形狀的做法，`_draw()` 整個函式可以刪除。 |
+| `scripts/entities/Player.gd` | ~~三角長袍+尖帽+法杖~~ **已完成（2026-10-12），見 §2.1a** | `AnimatedSprite2D`（`scripts/entities/PlayerSpriteAnimator.gd`） | 已完成。 |
 | `scripts/spells/SpellProjectile.gd` | 發光球體+環繞光點，顏色依 `impact` 類型變化（`orb_color`） | 一組法術彈道 Sprite | 新增 `Sprite2D` 子節點，`orb_color` 可保留用於 `modulate` 著色（若美術資源設計成灰階+程式上色，可沿用現有顏色邏輯）。 |
 | `scripts/entities/boss/Boss.gd`／`BossClone.gd` | 跟玩家同款法師造型（紅袍＋披風），`squash`/`idle_bob` 驅動擠壓與待機動畫，狀態機（`BossState` enum）控制讀氣/出招 | 怪物 `AnimatedSprite2D`（Idle/CloneSummon/Fireball/OrbBarrage/Hit 動畫） | 狀態機已存在且與美術無關，在狀態切換處加上動畫播放呼叫即可，狀態機邏輯不用改。招式的警示範圍指示（`BossFireball.gd` 等畫的範圍圈）建議保留程式繪圖，不建議做成美術資源——範圍指示通常用簡單幾何+shader 即時生成效果最好維護。 |
 | `scripts/core/Arena.gd` | 程式生成磚塊紋理（固定 seed 隨機明暗），三層同心圓結構 | Godot `TileMap` + `TileSet`，使用真正的石磚貼圖素材 | 整個場地從「程式畫的大圖」改成「TileMap 鋪真實磚塊貼圖」，牆體碰撞（`Main.tscn` 的 `Walls`）邏輯不受影響，可照舊沿用，只需外觀換成貼圖對齊。 |
 | `scripts/fx/MagicFX.gd` | `CPUParticles2D` 用純色圓點模擬粒子爆發/拖尾，地面類效果額外壓成橢圓（`GROUND_SQUASH`，呼應 3/4 俯視角視覺語言） | 美術設計的粒子貼圖（`texture` 屬性），或維持 `CPUParticles2D` 但換成含材質的版本 | `spawn_burst()`/`make_sparkle_trail()`/`spawn_explosion_ring()` 這些 helper 的參數介面（`parent, pos, color, amount, speed`）可完全不變，只需在內部幫 `CPUParticles2D` 加上 `texture` 屬性，呼叫端完全不用改。 |
 | UI（`Main.tscn`/`Lobby.tscn`） | 純 Godot 內建 `ProgressBar`/`Label`/`Button`，沒有自訂樣式 | 自訂 `Theme` 資源，套用美術設計的 UI 框架/字體/圖示 | Godot 的 `Theme` 系統可整組套用，不需逐個節點改，建議美術資源確定後直接做一份 `.tres` Theme 檔套用到各場景的 `UI` CanvasLayer 下所有節點。 |
+
+### 2.1a 玩家角色動畫化實作記錄（2026-10-12）
+
+AI 生成了 6 張 sprite sheet（4方向走路/4對角走路/蓄力/buff釋放/攻擊釋放/受擊，生圖提示詞見 `art/prompts/player_sprite_sheet_prompts.md`），放進 `art/` 後切成 46 個單幀 PNG（`art/characters/player/<animation>_<index>.png`，原始大圖保留在 `art/characters/player/_source_sheets/`），正式取代 `Player.gd` 原本的 `_draw()` 手繪造型。
+
+**架構**：新增 `scripts/entities/PlayerSpriteAnimator.gd`（`class_name PlayerSpriteAnimator extends AnimatedSprite2D`，掛在 `Player.tscn` 的 `SpriteAnimator` 子節點），`_ready()` 時用檔名慣例動態組出 `SpriteFrames`（不是手刻 `.tres`），之後要抽換/增補動畫只要照規則丟圖、改幀數表，不用碰程式邏輯。`Player.gd` 只新增了「目前面向哪個方向」（`facing_direction`，8方向，移動/衝刺時更新）跟「照狀態決定要播哪個動畫」（`_update_sprite_animation()`）兩塊邏輯，`is_casting`/`is_dashing`/`take_damage()` 等既有狀態機完全沒動——驗證了 §1 說的「邏輯跟繪圖分離」設計確實撐得住真的換成動畫素材。
+
+**踩到的坑（下次拿到新一批 AI 生圖素材時要記得檢查）**：
+1. **6 張 sheet 不是同一次生成，構圖比例不一致**——角色在畫布裡佔的比例差很多（走路系列幾乎頂滿畫布，蓄力/釋放/受擊系列因為要留空間給往上延伸的魔法特效，角色相對小很多）。如果全部套同一個 `AnimatedSprite2D.scale`/`offset`，切換動畫時角色會「跳大小」。解法：用 Python/Pillow 分析每張圖 alpha 通道算出角色腳底位置，反推出「讓角色在畫面上維持約80px高、不管哪個動畫播放中看起來都一樣大」所需的 `scale`/`offset`，每一類動畫（`walk`/`cast_charge`/`cast_release_buff`/`cast_release_attack`/`hurt`）各自一組，見 `PlayerSpriteAnimator.TRANSFORM_BY_CATEGORY`——這組數字是估算值，不是精確量測，先求「看起來合理」，之後美術資源定案了再微調。
+2. **部分 sheet（釋放動畫那兩張）背景不是乾淨的透明**，雖然 alpha 通道技術上有漸層（不是純色實心背景），但畫面上會看到一圈淡淡的藍色光暈背景，不是提示詞要求的「硬邊、無暈染」——跟使用者先前回報的「太過精緻」是同一個根因（AI 生圖工具沒有完全照 `art/prompts/player_sprite_sheet_prompts.md` 的指示做），目前先讓它過（使用者已經看過整體效果，選擇先串接進遊戲，不等重新生成），之後要重新生成這批素材時要特別注意這點。
+3. Godot 4 的 `AnimatedSprite2D.animation_finished` 訊號對「循環動畫」也會每輪觸發一次（不是只有非循環動畫播完才觸發），`PlayerSpriteAnimator` 的一次性動畫互斥鎖（`_one_shot_playing`）設計時利用了「一次性動畫播放期間只有它自己在播」這個前提，不受這個訊號行為影響，但如果之後要拿這個訊號做其他用途要注意這點。
+
+**2026-10-12 後續**：使用者把 `cast_charge`（蓄力）換成一張乾淨版（`art/characters/player/_source_sheets/sheet_C_cast_charge_v2.png`，背景真的透明、無暈染，踩坑第2點那種問題這張沒有）——證明第2點那個問題是可以透過重新生成解決的，不是生圖工具的天生限制。重新切幀＋用同一套 alpha 分析重新量測錨點/縮放，算出來的 `scale`/`offset` 跟舊版幾乎沒差（`0.157`/`-331` vs 原本的 `0.16`/`-330`），純屬巧合（這兩張圖角色在畫布裡的構圖比例剛好很接近），不代表以後換圖都可以跳過重新量測這一步。
 
 ### 2.2 建議的遷移順序
 1. **Arena 地板/牆**（視覺影響最大、玩家第一眼看到的東西，且跟遊戲邏輯幾乎無關，風險最低）。
@@ -37,7 +50,7 @@
 - 色彩分工目前已用程式碼隱含定義，美術資源設計時建議沿用，保持辨識度一致：
   - 法術/傷害類：傷害＝紅、爆炸/範圍＝橘、強力/爆發＝粉紫或金黃、吟唱加速＝青、吟唱減速＝藍紫。
   - 角色狀態：吟唱中＝紫、超魔專長成功＝綠閃、失敗＝紅閃、受到怪物攻擊＝橘閃。
-  - 法術身分色（大廳/輪盤用）：火球術＝橘、力場波＝紫、雷電箭＝電光藍、隱形術＝灰藍、速度提升＝黃綠。
+  - 大廳/輪盤目前不再用法術各自的身分色（已移除），格子統一用單一顏色，靠文字/圖示分辨法術，美術資源設計時可重新決定要不要引入每把法術的識別色。
 - 怪物目前是跟玩家同款法師造型（紅袍＋披風），這只是程式繪圖階段共用同一套繪製技巧的權宜做法，不是美術方向的硬性限制，正式美術可重新設計怪物種族/外觀。
 
 ---

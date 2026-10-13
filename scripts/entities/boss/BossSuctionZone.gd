@@ -59,7 +59,7 @@ func is_player_inside() -> bool:
 	if player == null:
 		return false
 	var offset: Vector2 = player.global_position - global_position
-	if offset.length() > range:
+	if GroundProjection.projected_length(offset) > range:
 		return false
 	var angle_diff: float = abs(wrapf(offset.angle() - rotation, -PI, PI))
 	return angle_diff <= half_angle

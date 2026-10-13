@@ -15,6 +15,8 @@ extends Control
 
 const RADIUS := 90.0
 const DEAD_ZONE := 12.0
+## 法術不再各自配色，所有格子統一用這個顏色填色（跟 SpellWheel.gd 的 SLICE_COLOR 保持一致）。
+const SLICE_COLOR := Color(0.55, 0.5, 0.75)
 
 ## 內部持有自己的複本，不是外部傳進來的同一個 Array 參照——GDScript 的 Array 跟 Resource 一樣是
 ## 參照型別，拖拽時 in-place 交換若直接用同一個陣列，會不小心連動改到呼叫端（Lobby.gd 的 selected），
@@ -98,7 +100,7 @@ func _draw() -> void:
 		var mid := -PI / 2.0 + slice * i
 		var start_angle := mid - slice / 2.0
 		var end_angle := mid + slice / 2.0
-		var color: Color = GameState.color_for(spells[i])
+		var color := SLICE_COLOR
 		var alpha := 0.45
 		if i == dragging_index:
 			# 被拿起來了，這一格暫時留空/變暗
@@ -142,8 +144,7 @@ func _draw_floating_chip() -> void:
 	var centroid_offset := Vector2(cos(mid), sin(mid)) * centroid_dist
 	var apex_pos := drag_visual_pos - centroid_offset
 
-	var color: Color = GameState.color_for(spells[dragging_index])
-	_draw_pie_slice(apex_pos, start_angle, end_angle, Color(color, 0.95), RADIUS)
+	_draw_pie_slice(apex_pos, start_angle, end_angle, Color(SLICE_COLOR, 0.95), RADIUS)
 	draw_arc(apex_pos, RADIUS, start_angle, end_angle, 48, Color.WHITE, 3.0, true)
 	var label_pos := apex_pos + Vector2(cos(mid), sin(mid)) * (RADIUS * 0.6)
 	draw_string(font, label_pos - Vector2(40, 0), spells[dragging_index].display_name, HORIZONTAL_ALIGNMENT_CENTER, 80, 14, Color.WHITE)

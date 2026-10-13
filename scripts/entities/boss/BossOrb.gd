@@ -28,14 +28,14 @@ func _process(delta: float) -> void:
 	global_position += direction * speed * delta
 	queue_redraw()
 
-	var offset: Vector2 = global_position - Arena.ARENA_CENTER
-	if offset.length() > Arena.ARENA_RADIUS:
+	# 2026-10-12：改用壓扁橢圓邊界（跟場地視覺/其他邊界判斷統一），取代正圓 .length()。
+	if GroundProjection.projected_distance(global_position, Arena.ARENA_CENTER) > Arena.ARENA_RADIUS:
 		_resolved = true
 		queue_free()
 		return
 
 	var player := _find_player()
-	if player and player.global_position.distance_to(global_position) <= HIT_RADIUS:
+	if player and GroundProjection.projected_distance(player.global_position, global_position) <= HIT_RADIUS:
 		_resolved = true
 		player.take_damage(damage)
 		MagicFX.spawn_burst(get_parent(), global_position, Color(0.5, 0.85, 1.0), 14, 180.0)

@@ -3,6 +3,8 @@ extends Control
 
 const RADIUS := 110.0
 const DEAD_ZONE := 12.0
+## 法術不再各自配色，所有格子統一用這個顏色填色，靠格子文字跟目前裝備中的白色外框標示區分。
+const SLICE_COLOR := Color(0.55, 0.5, 0.75)
 
 var spells: Array = []
 var hover_index := -1
@@ -38,9 +40,8 @@ func _draw() -> void:
 		var mid := -PI / 2.0 + slice * i
 		var start_angle := mid - slice / 2.0
 		var end_angle := mid + slice / 2.0
-		var color: Color = GameState.color_for(spells[i])
 		var is_hovered := i == hover_index
-		_draw_pie_slice(start_angle, end_angle, Color(color, 0.85 if is_hovered else 0.45))
+		_draw_pie_slice(start_angle, end_angle, Color(SLICE_COLOR, 0.85 if is_hovered else 0.45))
 		var label_pos := center + Vector2(cos(mid), sin(mid)) * (RADIUS * 0.62)
 		var spell = spells[i]
 		draw_string(font, label_pos - Vector2(44, 0), spell.display_name, HORIZONTAL_ALIGNMENT_CENTER, 88, 16, Color.WHITE)

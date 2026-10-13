@@ -16,3 +16,16 @@ func on_start(target: Node) -> void:
 
 func on_expire(target: Node) -> void:
 	target.speed_boost_mult = 0.0
+
+## 「法術強效」用：mult 是像 0.1=10% 這種比例，直接對浮點數 floor 會整個變成0（無條件捨去
+## 小於1的數字一律歸零），所以先換算成「整數個百分點」再 floor，不然 10%*1.5=15% 會被捨去
+## 成 0%，整個 buff 效果消失——這是 floor 套在小數比例欄位上必須注意的陷阱。參數刻意不叫
+## mult，避免跟這個類別自己的 mult 欄位撞名（撞名的話這裡會變成改到參數本身，不是真的欄位）。
+func scale_potency(factor: float) -> void:
+	mult = floor(mult * 100.0 * factor) / 100.0
+
+func has_scalable_potency() -> bool:
+	return true
+
+func describe_potency() -> String:
+	return "強度 +%.0f%%" % (mult * 100.0)

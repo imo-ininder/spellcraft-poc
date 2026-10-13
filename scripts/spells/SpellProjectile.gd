@@ -11,9 +11,9 @@ var impact: ProjectileImpact
 var bounces_off_walls := false
 var _resolved := false
 
-## speed 由呼叫端（ProjectileDelivery.fire()）算好：預設是「travel_time 秒內飛完 max_range」反推出來的
-## （見 docs/SPELL_SYSTEM.md §8.8），但 fixed_speed>0 的法術（例如雷電箭，見 §8.12）會直接給固定值，
-## 不隨 max_range 變動——SpellProjectile 自己不管是哪一種，只負責照給定的 speed 飛。
+## speed 由呼叫端（ProjectileDelivery.fire()）算好：預設是「travel_time 秒內飛完 max_range」反推出來的，
+## 但 fixed_speed>0 的法術（例如雷電箭）會直接給固定值，不隨 max_range 變動——SpellProjectile 自己
+## 不管是哪一種，只負責照給定的 speed 飛，細節見 docs/SPELL_SYSTEM.md。
 func setup(direction: Vector2, dmg: float, range_limit: float, speed: float, impact_behavior: ProjectileImpact, bounce: bool = false) -> void:
 	damage = dmg
 	max_range = range_limit
@@ -52,12 +52,27 @@ func _physics_process(delta: float) -> void:
 ## 不是 ARENA_RADIUS（那是外圈boss環道的外緣）——雷電箭是玩家法術，玩家本人被牆物理擋在
 ## PLAYER_ZONE_RADIUS 以內，投射物的反彈邊界理當跟著玩家能站的範圍走，不是場地最外圈那麼遠
 ## （用 ARENA_RADIUS 的話，投射物會直接飛穿過縫隙、飛進 boss 環道，在那邊彈來彈去，不合理）。
+##
+## 2026-10-12 修正：`Arena.ARENA_CENTER`/`Arena.PLAYER_ZONE_RADIUS` 是宣告在 Arena 腳本類別上
+## 的 const，不管目前在哪個場景、場景裡有沒有真的放一個 Arena 節點，都讀得到同一組寫死數值
+## （Main.tscn 專用的座標）——`scenes/SpellTestRange.tscn` 沒有 Arena 節點、也沒有牆，但雷電箭
+## 照樣會拿 Main.tscn 的場地座標來反彈，導致看起來「沒有從角色位置發射」（玩家出生點離
+## Arena.ARENA_CENTER 的距離本來就超出 PLAYER_ZONE_RADIUS，第一幀就被夾限彈飛）＋「沒有牆的
+## 地方也會反彈」兩個症狀，其實是同一個根因。改成先確認目前場景真的有 Arena 節點（代表真的在
+## Main.tscn 那種有圍牆的場地）才套用這段邊界判斷，沒有的場景（SpellTestRange 這種開放測試場）
+## 直接跳過，讓投射物單純飛到 max_range 自然消失，不套用任何場地邊界反彈。
+##
+## 2026-10-12：場地改成壓扁橢圓後，夾限改用 GroundProjection.clamp_to_radius()（跟
+## AoETargetingReticle.gd 選點夾限同一套數學），反彈法線改用 GroundProjection.ellipse_normal()
+## 算真正的橢圓法線——不能再用 offset.normalized()（那是正圓公式，橢圓上任一點的法線方向跟
+## 「圓心→該點」方向不同，尤其長短軸差距越大偏差越明顯，用正圓公式會讓反彈角度肉眼可見地不對）。
 func _bounce_off_arena_bounds() -> void:
-	var offset: Vector2 = global_position - Arena.ARENA_CENTER
-	if offset.length() <= Arena.PLAYER_ZONE_RADIUS:
+	if not get_tree().current_scene.has_node("Arena"):
 		return
-	var normal := offset.normalized()
-	global_position = Arena.ARENA_CENTER + normal * Arena.PLAYER_ZONE_RADIUS
+	if GroundProjection.projected_distance(global_position, Arena.ARENA_CENTER) <= Arena.PLAYER_ZONE_RADIUS:
+		return
+	global_position = GroundProjection.clamp_to_radius(Arena.ARENA_CENTER, global_position, Arena.PLAYER_ZONE_RADIUS)
+	var normal := GroundProjection.ellipse_normal(Arena.ARENA_CENTER, Arena.PLAYER_ZONE_RADIUS, global_position)
 	velocity = velocity.bounce(normal)
 	rotation = velocity.angle()
 	MagicFX.spawn_burst(get_parent(), global_position, orb_color, 8, 120.0)

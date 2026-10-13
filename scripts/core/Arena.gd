@@ -40,6 +40,11 @@ func _ready() -> void:
 ## 在不在場地範圍內的判斷現在分兩種：內圈（距離 <= PLAYER_ZONE_RADIUS）或外圈環帶
 ## （BOSS_RING_INNER_RADIUS <= 距離 <= ARENA_RADIUS）——落在中間縫隙的格子直接跳過不產生，
 ## 這就是兩個場地視覺上「不能互通」的來源：縫隙那一圈螢幕上只會露出背景色，沒有地板可走。
+##
+## 2026-10-12：距離判斷改用 GroundProjection.projected_distance()（squash 壓扁）取代
+## Vector2.length()（正圓）——「projected_distance(p, 原點) <= R」這個條件在原始 xy 座標上
+## 畫出來，形狀本來就是一個長軸R、短軸R*squash的橢圓（數學上等價，不用額外改磚塊本身的
+## 座標/間距，純粹換判斷式，選出來的磚塊範圍自動變成橢圓形）。
 func _generate_tile_colors() -> void:
 	var span := int(ceil(ARENA_RADIUS * 2.0 / TILE_SIZE)) + 2
 	var rng := RandomNumberGenerator.new()
@@ -50,7 +55,7 @@ func _generate_tile_colors() -> void:
 		for x in range(span):
 			var cx: float = x * TILE_SIZE - row_offset + TILE_SIZE / 2.0 - ARENA_RADIUS
 			var cy: float = y * TILE_SIZE + TILE_SIZE / 2.0 - ARENA_RADIUS
-			var dist := Vector2(cx, cy).length()
+			var dist := GroundProjection.projected_length(Vector2(cx, cy))
 			var in_player_zone := dist <= PLAYER_ZONE_RADIUS
 			var in_boss_ring := dist >= BOSS_RING_INNER_RADIUS and dist <= ARENA_RADIUS
 			if not (in_player_zone or in_boss_ring):
@@ -89,10 +94,13 @@ func _draw() -> void:
 ## 的情況，目前只有 boss 環道內牆）。不管哪個方向，亮邊永遠在離 ARENA_CENTER 較近的那一側、
 ## 暗邊在較遠的那一側——這樣三道牆的明暗方向看起來才一致，不會因為凸出方向不同而兩道牆
 ## 亮暗相反、看起來不協調。
+## 2026-10-12：draw_arc() 只能畫正圓，改用 GroundProjection.ellipse_points()+draw_polyline()
+## 畫壓扁橢圓——牆體視覺跟地板磚塊/boss巡邏軌道改成同一套橢圓，不再是正圓場地裡包一圈橢圓
+## 範圍指示那種不協調的組合。
 func _draw_ring_wall(radius: float, border_color: Color, grow_outward: bool) -> void:
 	var band_start: float = radius if grow_outward else radius - WALL_THICKNESS
 	var band_end: float = radius + WALL_THICKNESS if grow_outward else radius
 	var mid: float = (band_start + band_end) / 2.0
-	draw_arc(ARENA_CENTER, mid, 0, TAU, 96, border_color, WALL_THICKNESS, true)
-	draw_arc(ARENA_CENTER, band_start + 2.0, 0, TAU, 96, border_color.lightened(0.35), 4.0, true)
-	draw_arc(ARENA_CENTER, band_end - 2.0, 0, TAU, 96, border_color.darkened(0.4), 4.0, true)
+	draw_polyline(GroundProjection.ellipse_points(ARENA_CENTER, mid, 96), border_color, WALL_THICKNESS, true)
+	draw_polyline(GroundProjection.ellipse_points(ARENA_CENTER, band_start + 2.0, 96), border_color.lightened(0.35), 4.0, true)
+	draw_polyline(GroundProjection.ellipse_points(ARENA_CENTER, band_end - 2.0, 96), border_color.darkened(0.4), 4.0, true)

@@ -5,7 +5,11 @@
 [ext_resource type="PackedScene" path="res://scenes/entities/boss/Boss.tscn" id="3"]
 [ext_resource type="Script" uid="uid://dvb3s0q081ac7" path="res://scripts/core/Arena.gd" id="4"]
 [ext_resource type="Script" uid="uid://bf2usklhmco4b" path="res://scripts/ui/SpellWheel.gd" id="5"]
-[ext_resource type="Script" uid="uid://dqwuran1rnn3c" path="res://scripts/ui/AoETargetingReticle.gd" id="6"]
+[ext_resource type="PackedScene" path="res://scenes/ui/CastBar.tscn" id="7"]
+[ext_resource type="PackedScene" path="res://scenes/ui/HealthOrb.tscn" id="8"]
+[ext_resource type="PackedScene" path="res://scenes/ui/DeathScreen.tscn" id="9"]
+[ext_resource type="Script" path="res://scripts/core/PlayerZoneWall.gd" id="10"]
+[ext_resource type="PackedScene" path="res://scenes/ui/BossHealthBar.tscn" id="11"]
 
 [node name="Main" type="Node2D" unique_id=333631629]
 script = ExtResource("1")
@@ -19,7 +23,7 @@ collision_mask = 0
 
 [node name="Boundary" type="CollisionPolygon2D" parent="Walls" unique_id=958849541]
 build_mode = 1
-polygon = PackedVector2Array(860, 350, 857.776, 383.937, 851.141, 417.293, 840.209, 449.498, 825.167, 480, 806.272, 508.278, 783.848, 533.848, 758.278, 556.272, 730, 575.167, 699.498, 590.209, 667.293, 601.141, 633.937, 607.776, 600, 610, 566.063, 607.776, 532.707, 601.141, 500.502, 590.209, 470, 575.167, 441.722, 556.272, 416.152, 533.848, 393.728, 508.278, 374.833, 480, 359.791, 449.498, 348.859, 417.293, 342.224, 383.937, 340, 350, 342.224, 316.063, 348.859, 282.707, 359.791, 250.502, 374.833, 220, 393.728, 191.722, 416.152, 166.152, 441.722, 143.728, 470, 124.833, 500.502, 109.791, 532.707, 98.859, 566.063, 92.224, 600, 90, 633.937, 92.224, 667.293, 98.859, 699.498, 109.791, 730, 124.833, 758.278, 143.728, 783.848, 166.152, 806.272, 191.722, 825.167, 220, 840.209, 250.502, 851.141, 282.707, 857.776, 316.063)
+script = ExtResource("10")
 
 [node name="Player" parent="." unique_id=386793785 instance=ExtResource("2")]
 position = Vector2(600, 450)
@@ -27,17 +31,13 @@ position = Vector2(600, 450)
 [node name="Boss" parent="." unique_id=1658754313 instance=ExtResource("3")]
 position = Vector2(1005, 350)
 
-[node name="AoETargetingReticle" type="Node2D" parent="." unique_id=616164596]
-script = ExtResource("6")
-
 [node name="UI" type="CanvasLayer" parent="." unique_id=184870663]
 
-[node name="CastBar" type="ProgressBar" parent="UI" unique_id=1623939774]
+[node name="CastBar" parent="UI" unique_id=1623939774 instance=ExtResource("7")]
 offset_left = 400.0
 offset_top = 650.0
 offset_right = 880.0
 offset_bottom = 680.0
-show_percentage = false
 
 [node name="FeatContainer" type="HBoxContainer" parent="UI" unique_id=1033303329]
 offset_left = 400.0
@@ -90,3 +90,17 @@ offset_top = 20.0
 offset_right = 1260.0
 offset_bottom = 556.0
 theme_override_font_sizes/font_size = 13
+
+[node name="HealthOrb" parent="UI" instance=ExtResource("8")]
+offset_left = 20.0
+offset_top = 590.0
+offset_right = 140.0
+offset_bottom = 710.0
+
+[node name="BossHealthBar" parent="UI" instance=ExtResource("11")]
+offset_left = 390.0
+offset_top = 15.0
+offset_right = 890.0
+offset_bottom = 55.0
+
+[node name="DeathScreen" parent="UI" instance=ExtResource("9")]

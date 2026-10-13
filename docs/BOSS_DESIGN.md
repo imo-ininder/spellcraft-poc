@@ -15,6 +15,8 @@
 
 **血量/死亡系統現況**：HP 歸零直接重置滿血＋閃光，不是真正的死亡，跟結算畫面完全無關。分身是唯一例外——分身的 3 HP 歸零是真的會消失，因為「可以被擊殺」是誤導機制成立的必要條件。
 
+**血量顯示（2026-10-12 調整）**：本體血量不再畫在頭上，改成畫面最上方單獨一條（`scripts/ui/BossHealthBar.gd`，追蹤 `Boss.hp_changed` 訊號，目前寫死的展示名稱是「分身紅袍法師」，佔位用，之後有正式命名再換）。boss 本體跟所有分身頭上都不再顯示任何血條——分身完全沒有獨立血量 UI，這樣場上分身越多也不會讓玩家誤以為「某個分身的血條掉了」（原本頭上血條其實一直是各自獨立的，只是玩家分不清哪個是本體），畫面上永遠只有這一條，固定代表本體真實血量。
+
 ---
 
 ## 2. 外觀與定位
@@ -81,7 +83,7 @@ boss 跟分身沿外圈固定軌道巡邏，完全不理會玩家在哪。位置
 | 分身 HP | `CLONE_HP` = 3 | 遠低於本體的 200，刻意好打，但玩家無法從外觀分辨誰是分身 |
 | 讀氣時間 | `CLONE_SUMMON_CHANNEL` = 4 秒 | 讀完才生出新一批 |
 | 讀氣中斷門檻 | `CLONE_SUMMON_INTERRUPT_THRESHOLD` = 10 點傷害 | 累積到就中斷，CD 重算 |
-| 分身術 CD | `CLONE_SUMMON_CD` = 5 秒 | 每次分身術施放完就重算 |
+| 分身術 CD | `CLONE_SUMMON_CD` = 20 秒（2026-10-12 從 5 秒調整，見下方說明） | 每次分身術施放完就重算 |
 | 開場保護期 | `CLONE_SUMMON_OPENING_GRACE` = 15 秒 | 開場這段時間完全不能放分身術 |
 
 分身存活時，陣型自動維持「總人數等分 360°」的巡邏站位，沿 boss 環道分散（不是圍著玩家——玩家物理上搆不到，圍著玩家站沒有意義），分身死掉或新增時自動重新對齊。新分身一出生就直接定位在陣位上，不會先生在本體旁邊再移動過去。
@@ -89,6 +91,8 @@ boss 跟分身沿外圈固定軌道巡邏，完全不理會玩家在哪。位置
 本體讀氣召喚新分身期間，既有分身會停下來並一起亮起跟本體一模一樣的讀氣光環（進度同步）——分身本身沒有真的做任何事，只有本體真的在倒數讀氣、真的會生出新分身，分身的光環純粹是視覺上的同步演出。
 
 分身術永遠優先於週期招式：閒置中（`IDLE`）分身術一轉好就立刻插隊；週期招式執行中轉好的話，等招式完全結束、再等 `CLONE_READY_BUFFER`（1秒）緩衝才開始讀氣。
+
+**2026-10-12：`CLONE_SUMMON_CD` 從 5 秒調整為 20 秒**——使用者實測回報「分身完5秒馬上又分身，感覺像bug」。查證後計時器本身沒有任何地方被提前歸零/繞過，CD 確實有跑滿才觸發，真正原因是：分身是逐批累加（一輪只召 `CLONE_SUMMON_BATCH`=2 隻，上限 `CLONE_MAX`=4），而原本的分身CD（5秒）比週期招式CD（7秒）還短——召滿上限之前，每一輪分身CD都會比週期招式CD先跑完，搶著觸發下一輪分身術，造成「剛分身完馬上又分身」的觀感，不是計時器邏輯的 bug。使用者確認要拉長CD數值（不是改逐批累加機制本身），改回最早計畫階段記錄的 20 秒。
 
 ---
 
@@ -157,6 +161,7 @@ boss 跟分身沿外圈固定軌道巡邏，完全不理會玩家在哪。位置
 | `scripts/entities/boss/BossSuctionZone.gd` | 吸引懲罰的單一扇形範圍：`TELEGRAPH`→`ACTIVE` 兩階段，永遠只服務一個施法者 |
 | `scenes/entities/boss/*.tscn` | 對應場景：`Boss`/`BossClone` 是 `StaticBody2D`＋`CircleShape2D`（碰撞半徑30），`BossFireball`/`BossOrb`/`BossSuctionZone` 是純 `Node2D` |
 | `scripts/core/Arena.gd` | 場地三層同心圓結構，`PLAYER_ZONE_RADIUS`/`GAP_WIDTH`/`BOSS_RING_INNER_RADIUS`/`BOSS_TRACK_RADIUS`/`ARENA_RADIUS` |
+| `scripts/ui/BossHealthBar.gd` + `scenes/ui/BossHealthBar.tscn` | 畫面最上方單獨一條本體血條，`Main.gd` 用 `bind(boss)` 接上 `Boss.hp_changed`；`Boss._draw_boss_body()` 不再畫頭上血條，分身也沒有自己的血量 UI |
 
 **怪物招式不走 `Spell`/`SpellDelivery`/`SpellEffect` 架構**——那套是為「玩家可配置、可替換」設計的，boss 招式是固定寫死的行為，直接寫在怪物腳本裡，不會出現在 `GameState.CATALOG` 裡。
 

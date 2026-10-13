@@ -30,8 +30,14 @@ extends StaticBody2D
 ##   不會再被觸發到了（縫隙寬度通常大於觸發距離），但還是保留整套邏輯，只是用 SUCTION_ENABLED
 ##   =false 關掉（只擋觸發判定這一步），之後如果場地數值調整到會重疊，隨時可以打開。
 ##
-## 分身術 CD（5秒，開場前 CLONE_SUMMON_OPENING_GRACE=15 秒完全不能用）跟週期招式 CD（7秒）
+## 分身術 CD（20秒，開場前 CLONE_SUMMON_OPENING_GRACE=15 秒完全不能用）跟週期招式 CD（7秒）
 ## 獨立計算、互不暫停。分身術永遠優先於週期招式：
+##
+## 2026-10-12 使用者回報「分身完5秒馬上又分身，感覺像bug」——查證後計時器本身沒有被提前
+## 歸零/繞過，CD確實有跑滿5秒才觸發，問題是分身CD(當時5秒)比週期招式CD(7秒)短，加上分身是
+## 逐批累加（一輪只召 CLONE_SUMMON_BATCH=2 隻，上限 CLONE_MAX=4），所以在召滿上限之前，
+## 每輪分身CD都會比週期招式CD先跑完、搶著觸發下一輪，造成「剛分身完馬上又分身」的觀感。
+## 使用者確認要拉長CD數值（不是改逐批累加機制），改回最早計畫階段記錄的20秒。
 ## 閒置等待中（IDLE）分身術轉好就立刻插隊；週期招式執行中轉好的話，等招式完全結束、
 ## 再等 1 秒緩衝（CLONE_SUMMON_BUFFER），才開始分身術讀氣——不會打斷正在執行中的招式。
 ## 分身數量是逐批累加到上限（CLONE_MAX=4隻分身，連本體一起算總共最多5個會行動的個體），
@@ -48,7 +54,7 @@ const KNOCKBACK_FRICTION := 900.0
 const CLONE_HP := 3.0
 const CLONE_MAX := 4 # 這是「分身」數量上限，不是總數——本體+分身加起來最多5個，所以分身上限要扣掉本體自己這1個
 const CLONE_SUMMON_BATCH := 2 # 每次分身術只多召喚這麼多隻，不是一次補滿上限
-const CLONE_SUMMON_CD := 5.0
+const CLONE_SUMMON_CD := 20.0
 const CLONE_SUMMON_OPENING_GRACE := 15.0 # 開場前這段時間完全不能用分身術，不是一進場就分身
 const CLONE_SUMMON_CHANNEL := 4.0
 const CLONE_SUMMON_INTERRUPT_THRESHOLD := 10.0
@@ -189,13 +195,11 @@ func _process(delta: float) -> void:
 	_clamp_to_arena()
 	queue_redraw()
 
+## 2026-10-12：改用 GroundProjection.clamp_to_ring()（壓扁橢圓環狀夾限）取代手刻正圓夾限——
+## 跟 Arena.gd 的地板/牆壁、BOSS_TRACK_RADIUS 的巡邏位置改成同一套橢圓，不然會變成「視覺是
+## 橢圓場地，但被擊退後夾回來的邊界是正圓」這種不一致。
 func _clamp_to_arena() -> void:
-	var offset: Vector2 = global_position - Arena.ARENA_CENTER
-	var dist := offset.length()
-	if dist > Arena.ARENA_RADIUS:
-		global_position = Arena.ARENA_CENTER + offset.normalized() * Arena.ARENA_RADIUS
-	elif dist < Arena.BOSS_RING_INNER_RADIUS and dist > 0.1:
-		global_position = Arena.ARENA_CENTER + offset.normalized() * Arena.BOSS_RING_INNER_RADIUS
+	global_position = GroundProjection.clamp_to_ring(Arena.ARENA_CENTER, global_position, Arena.BOSS_RING_INNER_RADIUS, Arena.ARENA_RADIUS)
 
 ## 固定軌道巡邏：不理會玩家在哪，沿著 Arena.BOSS_TRACK_RADIUS 這個固定半徑、以「停頓→快速
 ## 跳位80度→停頓」的頓挫節奏移動，不是連續勻速繞圈。跳位本身用 ease-out 插值（快速衝出去、
@@ -218,7 +222,7 @@ func _process_patrol(delta: float) -> void:
 			patrol_from_angle = track_angle
 			patrol_to_angle = track_angle + PATROL_MOVE_ANGLE
 			patrol_phase_timer = PATROL_MOVE_TIME
-	global_position = Arena.ARENA_CENTER + Vector2(cos(track_angle), sin(track_angle)) * Arena.BOSS_TRACK_RADIUS
+	global_position = GroundProjection.ellipse_point(Arena.ARENA_CENTER, Arena.BOSS_TRACK_RADIUS, track_angle)
 
 ## 分身也在同一條固定軌道上巡邏，跟本體錯開角度、盡量維持等分角度（總人數等分 360 度）分散
 ## 站——用本體自己的 track_angle 當基準，直接把每個分身的 track_angle 設成「本體角度+等分偏移」，
@@ -344,7 +348,7 @@ func _spawn_clone(angle: float) -> void:
 	var clone := clone_scene.instantiate()
 	get_tree().current_scene.add_child(clone)
 	clone.track_angle = angle
-	clone.global_position = Arena.ARENA_CENTER + Vector2(cos(angle), sin(angle)) * Arena.BOSS_TRACK_RADIUS
+	clone.global_position = GroundProjection.ellipse_point(Arena.ARENA_CENTER, Arena.BOSS_TRACK_RADIUS, angle)
 	clone.died.connect(_on_clone_died.bind(clone))
 	clones.append(clone)
 
@@ -436,7 +440,7 @@ func _roll_for_suction_trigger(delta: float) -> Node2D:
 	for caster in casters:
 		if not is_instance_valid(caster):
 			continue
-		var d: float = caster.global_position.distance_to(player.global_position)
+		var d: float = GroundProjection.projected_distance(caster.global_position, player.global_position)
 		if d >= SUCTION_TRIGGER_RANGE:
 			continue
 		var proximity: float = 1.0 - d / SUCTION_TRIGGER_RANGE
@@ -474,7 +478,7 @@ func _start_suction_punish(caster: Node2D) -> void:
 			if player.speed_multiplier != 1.0:
 				player.speed_multiplier = 1.0
 			miss_timer += delta
-		if active and player.global_position.distance_to(caster.global_position) <= SUCTION_CLOSE_RANGE:
+		if active and GroundProjection.projected_distance(player.global_position, caster.global_position) <= SUCTION_CLOSE_RANGE:
 			_resolve_suction_punish(caster, player)
 			punished = true
 			break
@@ -520,7 +524,7 @@ func _find_player() -> Node2D:
 	return players[0]
 
 func _draw() -> void:
-	_draw_boss_body(self, hp, MAX_HP, flash_timer, squash, idle_bob)
+	_draw_boss_body(self, flash_timer, squash, idle_bob)
 	if is_channeling_clone_summon:
 		var progress: float = 1.0 - clamp(channel_timer / CLONE_SUMMON_CHANNEL, 0.0, 1.0)
 		draw_arc(Vector2.ZERO, 46, -PI / 2.0, -PI / 2.0 + progress * TAU, 32, Color(1, 0.3, 0.9, 0.9), 4.0, false)
@@ -535,7 +539,11 @@ func _draw() -> void:
 ## 一直沒調好看，使用者乾脆要求拿掉，法師造型光靠紅袍+披風+臉就能跟玩家區分，不缺帽子這個細節。
 ## boss 不會旋轉（沒有 look_at()，不像 Player 需要分朝左右），所以不用處理鏡射，固定朝下畫就好，
 ## 比例大致是 Player 造型的 1.5 倍（boss 要比玩家看起來更有存在感）。
-static func _draw_boss_body(node: CanvasItem, cur_hp: float, max_hp: float, flash: float, sq: float, bob_phase: float) -> void:
+##
+## 2026-10-12：移除原本畫在這裡的頭上小血條——使用者要求 boss/分身頭上都不該有血條，
+## 血量改成畫面最上方單獨一條（只追蹤本體，見 scripts/ui/BossHealthBar.gd），不再由這個
+## 共用畫法負責，所以函式簽章也拿掉了 cur_hp/max_hp 兩個現在沒人用的參數。
+static func _draw_boss_body(node: CanvasItem, flash: float, sq: float, bob_phase: float) -> void:
 	var robe_color := Color(1.0, 0.55, 0.55) if flash > 0.0 else Color(0.75, 0.12, 0.12)
 	var robe_shade := robe_color.darkened(0.25)
 	var cape_color := Color(0.3, 0.04, 0.04)
@@ -586,8 +594,3 @@ static func _draw_boss_body(node: CanvasItem, cur_hp: float, max_hp: float, flas
 	node.draw_circle(face_center, 15, Color(0.95, 0.82, 0.65))
 	node.draw_circle(face_center + Vector2(-5.3, 3) * scale, 1.8, Color(0.2, 0.1, 0.1))
 	node.draw_circle(face_center + Vector2(5.3, 3) * scale, 1.8, Color(0.2, 0.1, 0.1))
-
-	# HP 血條：沒有帽子要避開了，直接放在臉的上方留一點空隙就好。
-	var hp_ratio := cur_hp / max_hp
-	node.draw_rect(Rect2(-30, -58, 60, 8), Color(0.15, 0.15, 0.15))
-	node.draw_rect(Rect2(-30, -58, 60 * hp_ratio, 8), Color(0.9, 0.3, 0.3))
