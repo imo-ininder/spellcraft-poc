@@ -5,8 +5,9 @@ extends SpellEffect
 ## 參考 PoE 技能寶石「傷害顯示為區間」的設計，不是寫死單一數字。
 @export var min_amount: float = 0.0
 @export var max_amount: float = 0.0
-## 符紋百分比加成用：對「目前已累加的傷害值」疊加百分比，不是對最終值相乘
-## （見 docs/DESIGN.md 3.6，這個語意是刻意的，別改成相乘）
+## 舊超魔專長系統的百分比加成欄位（已刪除，見 docs/SPELL_SYSTEM.md），新系統目前用不到、留 0.0
+## 即可。語意是對「目前已累加的傷害值」疊加百分比，不是對最終值相乘——這個語意是刻意的，
+## 之後如果真的要重新接上類似機制，別改成相乘。
 @export var damage_mult: float = 0.0
 
 func _init(min_amt: float = 0.0, max_amt: float = 0.0, mult: float = 0.0) -> void:

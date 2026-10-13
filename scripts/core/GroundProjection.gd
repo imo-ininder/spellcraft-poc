@@ -11,7 +11,9 @@ class_name GroundProjection
 ## Boundary` 的 `CollisionPolygon2D` 現在改成在執行期用 `ellipse_points()` 動態產生橢圓頂點
 ## （取代原本寫死的正圓頂點），boss 巡邏軌道／分身出生位置改用 `ellipse_point()`，
 ## `SpellProjectile` 牆壁反彈改用 `clamp_to_radius()`／`ellipse_normal()`，細節見
-## `docs/DESIGN.md` §4／§5.1。
+## `docs/SYSTEMS.md` §3.1（原始記錄在已刪除的 `docs/DESIGN.md` §4／§5.1，內容已搬過去）。
+## 2026-10-13：`Main.tscn`（連同上面提到的 `Walls/Boundary`）已刪除，場地相關的壓扁橢圓邏輯
+## 目前沒有場景在用，純粹是保留著的工具函式，見 `docs/SYSTEMS.md` §3.1 的孤兒腳本說明。
 ##
 ## 碰撞形狀（CircleShape2D）本身也不受這個系統影響——範圍判定是程式碼手動算距離，碰撞形狀
 ## 是 Godot 物理引擎的實際重疊偵測，兩者是不同機制，這次只處理前者。
@@ -60,8 +62,8 @@ static func ellipse_points(center: Vector2, radius: float, segments: int = 64) -
 
 ## ellipse_points() 單點版——給「角度→固定半徑橢圓上的座標」這種用法（boss固定軌道巡邏、
 ## 分身出生定位），不用為了一個點也跑迴圈/重複同一條 cos/sin*squash 公式。2026-10-12 新增：
-## 場地圍牆/boss巡邏軌道這次改成跟著壓扁（之前 docs/DESIGN.md §5.1 明確記錄「結構性的東西
-## 刻意不套」是舊決定，使用者這次要求改掉）。
+## 場地圍牆/boss巡邏軌道這次改成跟著壓扁（「結構性的東西刻意不套壓扁」是更早的舊決定，
+## 使用者後來要求改掉，見 docs/SYSTEMS.md §3.1）。
 static func ellipse_point(center: Vector2, radius: float, angle: float) -> Vector2:
 	return center + Vector2(cos(angle) * radius, sin(angle) * radius * squash)
 

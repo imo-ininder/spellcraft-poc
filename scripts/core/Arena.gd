@@ -1,22 +1,24 @@
 class_name Arena
 extends Node2D
 
-## 場地分成三個同心圓區域：玩家只能待在內圈圓形場地，boss（含分身）固定在外圈環狀軌道上
-## 巡邏施法，兩者中間隔著一圈完全淨空的縫隙（不鋪磚、沒有牆面裝飾，純粹是視覺/空間上的
-## 「不能互通」）——玩家跟 boss 物理上永遠碰不到面，所有互動只能靠法術隔空進行，見
-## docs/BOSS_DESIGN.md 的場地設計小節。
+## 場地分成三個同心圓區域：玩家只能待在內圈圓形場地，外圈是原本給 boss（含分身）固定巡邏
+## 施法用的環狀軌道，兩者中間隔著一圈完全淨空的縫隙（不鋪磚、沒有牆面裝飾，純粹是視覺/
+## 空間上的「不能互通」）。
+##
+## 2026-10-13：boss 已經整個刪除（見 docs/GDD.md，戰鬥核心玩法改走符文演化+子彈時間，
+## 舊的「玩家/boss物理上永遠碰不到面、純隔空法術對轟」設計前提不再成立——新規劃有近戰普攻，
+## 玩家勢必要能欺身）。這個三環結構（含下面 BOSS_RING_INNER_RADIUS/BOSS_TRACK_RADIUS 這兩個
+## 命名殘留 boss 字樣的常數）先原封不動留著沒拆，純粹是還沒重新設計新場地，不是刻意決定
+## 要維持這個結構——之後真的要設計新戰鬥場地時，這整塊（含下面 `_generate_tile_colors()`/
+## `_draw_ring_wall()` 怎麼處理內外圈跟縫隙的邏輯）都要重新評估，不要假設這是定案。
 ##
 ## 半徑常數由內而外：PLAYER_ZONE_RADIUS（玩家場地）→ 縫隙（寬度 GAP_WIDTH）→
-## BOSS_RING_INNER_RADIUS（boss 環道內緣）→ BOSS_TRACK_RADIUS（boss 實際巡邏的固定半徑，
-## 算成環道內外緣的正中央，讓 boss 視覺上穩穩站在甜甜圈路面正中間——原本刻意偏內緣是想讓
-## 短程法術更有機會構到，但使用者實測後覺得巡邏路徑偏一邊很奇怪，要求置中，見 BOSS_DESIGN.md）→
-## ARENA_RADIUS（boss 環道外緣，整個場地的最外圈）。ARENA_CENTER/ARENA_RADIUS 這兩個
-## 常數名稱沿用改圓形場地時就有的慣例，其他腳本（Boss/BossClone/BossOrb/SpellProjectile）
-## 直接拿這些常數當全域座標的邊界判斷用，不用額外處理節點位移。
+## BOSS_RING_INNER_RADIUS（外圈環道內緣）→ BOSS_TRACK_RADIUS（環道內外緣正中央）→
+## ARENA_RADIUS（外圈環道外緣，整個場地的最外圈）。ARENA_CENTER/ARENA_RADIUS 這兩個
+## 常數名稱沿用改圓形場地時就有的慣例。
 ##
-## Main.tscn 的玩家牆壁碰撞（Walls/Boundary，CollisionPolygon2D）現在只圍 PLAYER_ZONE_RADIUS
-## 這一圈——boss/分身不走物理碰撞（手動控制位置，collision_mask=0），場景裡不需要為外圈
-## 另外做碰撞形狀，純粹靠 Boss.gd 自己的巡邏公式跟 _clamp_to_arena() 的邊界夾限維持在環道內。
+## Main.tscn 的玩家牆壁碰撞（Walls/Boundary，CollisionPolygon2D）只圍 PLAYER_ZONE_RADIUS
+## 這一圈，外圈目前沒有任何東西在上面走動，也還沒有自己的碰撞形狀。
 
 const TILE_SIZE := 56.0
 const ARENA_CENTER := Vector2(600.0, 350.0)

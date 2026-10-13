@@ -11,12 +11,11 @@ config_version=5
 [application]
 
 config/name="Spellcraft PoC"
-run/main_scene="res://scenes/Lobby.tscn"
+run/main_scene="res://scenes/SpellTestRange.tscn"
 config/features=PackedStringArray("4.6", "GL Compatibility")
 
 [autoload]
 
-GameState="*res://scripts/state/GameState.gd"
 MCPRuntimeServer="*res://addons/godot_mcp_toolkit/runtime/mcp_runtime_server.gd"
 
 [display]

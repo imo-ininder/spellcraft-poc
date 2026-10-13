@@ -20,35 +20,6 @@ position = Vector2(600, 650)
 
 [node name="UI" type="CanvasLayer" parent="." unique_id=832995452]
 
-[node name="LeftPanel" type="Panel" parent="UI" unique_id=1640839011]
-offset_right = 300.0
-offset_bottom = 720.0
-
-[node name="VBox" type="VBoxContainer" parent="UI/LeftPanel" unique_id=1899300597]
-layout_mode = 0
-offset_left = 12.0
-offset_top = 12.0
-offset_right = 288.0
-offset_bottom = 708.0
-
-[node name="SpellFoldHeader" type="Button" parent="UI/LeftPanel/VBox" unique_id=548392313]
-layout_mode = 2
-text = "法術（單選） ▾"
-
-[node name="SpellList" type="VBoxContainer" parent="UI/LeftPanel/VBox" unique_id=900554040]
-layout_mode = 2
-
-[node name="FeatFoldHeader" type="Button" parent="UI/LeftPanel/VBox" unique_id=1054372344]
-layout_mode = 2
-text = "超魔專長（多選） ▾"
-
-[node name="FeatList" type="VBoxContainer" parent="UI/LeftPanel/VBox" unique_id=1404505520]
-layout_mode = 2
-
-[node name="TriggeredLabel" type="Label" parent="UI/LeftPanel/VBox" unique_id=2056840406]
-layout_mode = 2
-autowrap_mode = 2
-
 [node name="CastBar" parent="UI" unique_id=1530068471 instance=ExtResource("6")]
 layout_mode = 3
 anchors_preset = 0
@@ -71,20 +42,4 @@ offset_left = 988.0
 offset_top = 20.0
 offset_right = 1260.0
 offset_bottom = 396.0
-theme_override_font_sizes/font_size = 13
-
-[node name="SpellStateBg" type="ColorRect" parent="UI" unique_id=760954239]
-visible = false
-offset_left = 980.0
-offset_top = 410.0
-offset_right = 1264.0
-offset_bottom = 700.0
-color = Color(0, 0, 0, 0.55)
-
-[node name="SpellStateLabel" type="Label" parent="UI" unique_id=816696196]
-visible = false
-offset_left = 988.0
-offset_top = 414.0
-offset_right = 1260.0
-offset_bottom = 696.0
 theme_override_font_sizes/font_size = 13

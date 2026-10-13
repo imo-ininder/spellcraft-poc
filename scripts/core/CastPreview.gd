@@ -1,10 +1,12 @@
 extends Node2D
 
-## 掛在 scenes/entities/Player.tscn 底下（不是掛在 Main.tscn／SpellTestRange.tscn 場景根層級），
-## 原因：任何用到 Player.tscn 的場景都會自動帶有這個功能，不需要每次新增/修改場景時都手動記得
-## 補一個節點＋一行 bind()——之前就是因為掛在場景根層級、各自手動接，導致只接了 SpellTestRange
-## 沒接 Main，正式戰鬥完全沒有預覽圈，見 docs/DESIGN.md 同一輪記錄。吟唱過程中（還沒真的施放）
-## 就先畫出這把法術的作用範圍，不用等到施放成功、進入選點/命中階段才看得到範圍大概多大/多遠。
+## 掛在 scenes/entities/Player.tscn 底下（不是掛在場景根層級），原因：任何用到 Player.tscn 的
+## 場景都會自動帶有這個功能，不需要每次新增/修改場景時都手動記得補一個節點＋一行 bind()——
+## 之前就是因為掛在場景根層級、各自手動接，導致只接了 SpellTestRange 沒接 Main.tscn（已刪除），
+## 正式戰鬥完全沒有預覽圈。吟唱過程中（還沒真的施放）就先畫出這把法術的作用範圍，不用等到
+## 施放成功、進入選點/命中階段才看得到範圍大概多大/多遠。2026-10-13 現況：舊戰鬥系統刪除後
+## 沒有法術會進入吟唱狀態（is_casting 恆為 false），這個節點目前不會真的畫出任何東西，但
+## 掛載方式/畫法架構保留著，等新系統的「施放中預覽」需求明確了再接上。
 ## 兩種預覽同時畫、互不取代：
 ## 1. 「最遠能打到哪」：以施法者為中心、半徑 = spell.max_range 的邊界圈，顏色/粗細刻意跟
 ##    AoETargetingReticle.gd 選點確認階段畫的外圈一致（Color(1,1,1,0.25)，寬度2.0）——這樣
@@ -49,20 +51,12 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	queue_redraw()
 
-## 這個節點現在是 Player 的子節點，_draw() 收到的座標要轉成相對自己原點的 local 座標（to_local()），
-## 不能再像以前（掛在場景根層級、原點跟世界座標原點重合）那樣直接拿 global_position 當畫圖座標，
-## 不然畫出來的位置會把 Player 當前位置多疊加一次。
+## 2026-10-13：舊的「吟唱中範圍預覽」整套依賴 player.is_casting／player.accumulated_feats／
+## player.debug_preview_scaled_spell()，這三個全部跟著舊的固定時長吟唱系統一起刪除了（見
+## docs/DEMO_PLAN.md Phase 1）。新系統沒有「準備中法術」這個持續性狀態可以預覽——Phase 1
+## 的蓄力火球/近戰是瞬間判定，Phase 2 的符文施法是按下就立即觸發，都沒有「吟唱中」這段
+## 期間。整個停用（維持 return，不畫任何東西），掛載方式/畫法架構（to_local()/
+## GroundProjection.ellipse_points() 這套）保留著，等之後真的有「目前鎖定節點」這種可以
+## 預覽的狀態時再重新設計要畫什麼、問誰拿數值。
 func _draw() -> void:
-	if not is_instance_valid(player) or not player.is_casting:
-		return
-	var spell: Spell = player.debug_preview_scaled_spell(player.accumulated_feats)
-	if spell == null or spell.delivery == null:
-		return
-
-	if spell.max_range > 0.0:
-		draw_polyline(GroundProjection.ellipse_points(to_local(player.global_position), spell.max_range), MAX_RANGE_COLOR, 2.0, true)
-
-	var radius := spell.delivery.get_radius()
-	if radius >= 0.0:
-		var center := spell.delivery.get_preview_center(player, spell.max_range)
-		draw_polyline(GroundProjection.ellipse_points(to_local(center), radius), PREVIEW_COLOR, 2.5, true)
+	return

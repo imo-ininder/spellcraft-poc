@@ -1,16 +1,16 @@
 extends Node2D
 
 ## 法術測試場（scripts/SpellTestRange.gd）用的簡化圓形地板，跟 Arena.gd 的三圈 boss 場地
-## 設計無關（那是給正式戰鬥場景用的，這裡不需要玩家/boss分隔）——只是一個單純的圓形地板，
-## 外加每 100px 一圈的同心圓參考線＋距離標籤，讓開發時能用肉眼對照法術的 max_range 數值
-## （例如 Fireball 500px／MagicMissile 750px／LightningBolt 1800px）在畫面上實際長怎樣。
+## 設計無關（Arena.gd 現在是孤兒腳本，沒有場景在用，見 docs/SYSTEMS.md §3.1）——只是一個
+## 單純的圓形地板，外加每 100px 一圈的同心圓參考線＋距離標籤，讓開發時能用肉眼對照法術的
+## max_range 數值在畫面上實際長怎樣。
 ##
-## docs/DESIGN.md §5.1：地板／牆壁本身維持純俯視正圓（不套壓扁，跟 Arena.gd 的地板磚塊/
-## 圓形牆壁一致，因為要對得上實際碰撞形狀）；但這裡的同心圓參考線功能上等同「範圍選取圈」
-## （純粹讓人對照法術 max_range，不是結構性的碰撞邊界），要套 GroundProjection.squash
-## 壓扁成橢圓，跟 AoETargetingReticle.gd／BossFireball.gd 的範圍預告圈同一套 3/4 視角語言——
-## 現在這條參考線用的壓扁比例，跟 GroundProjection.projected_distance() 判定範圍時用的是
-## 同一個係數，畫出來的橢圓邊界就是實際判定的邊界，這正是這個測試場原本要驗證的東西。
+## 地板／牆壁本身維持純俯視正圓（不套壓扁，因為要對得上實際碰撞形狀）；但這裡的同心圓參考線
+## 功能上等同「範圍選取圈」（純粹讓人對照法術 max_range，不是結構性的碰撞邊界），要套
+## GroundProjection.squash 壓扁成橢圓，跟 AoETargetingReticle.gd 的範圍預告圈同一套 3/4
+## 視角語言，細節見 docs/SYSTEMS.md §3.1——現在這條參考線用的壓扁比例，跟
+## GroundProjection.projected_distance() 判定範圍時用的是同一個係數，畫出來的橢圓邊界就是
+## 實際判定的邊界，這正是這個測試場原本要驗證的東西。
 
 const ARENA_CENTER := Vector2(600.0, 400.0)
 const ARENA_RADIUS := 1000.0 # 比 LightningBolt 以外所有法術的 max_range 都大，留夠觀察空間

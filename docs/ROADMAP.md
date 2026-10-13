@@ -1,6 +1,8 @@
 # Spellcraft PoC 美術遷移與玩法擴充路線圖
 
-> 本文件聚焦兩件事：**(1)** 目前用程式繪圖呈現的畫面，之後要怎麼換成正式美術資源；**(2)** 玩法/系統還缺哪些東西，以及建議的優先順序。核心機制設計請見 `DESIGN.md`，Boss AI 設計請見 `BOSS_DESIGN.md`，法術系統架構請見 `SPELL_SYSTEM.md`。
+> ⚠️ **2026-10-13：核心戰鬥方向已被 `docs/GDD.md` 取代，Boss 已整個刪除**。§1/§2（美術現狀/遷移計畫）談的是「程式繪圖換成美術資源」這個跟戰鬥系統設計無關的獨立工程問題，玩家角色的部分（§2.1a）依然成立；§2.1 表格裡 Boss 那一列已經連同 Boss 本體一起作廢（新戰鬥系統還沒有怪物）。§3（玩法/系統擴充清單）整份是舊系統的待辦，已被 `docs/GDD.md` §10 取代，不要再依此排優先序。
+
+> 本文件聚焦兩件事：**(1)** 目前用程式繪圖呈現的畫面，之後要怎麼換成正式美術資源；**(2)** 玩法/系統還缺哪些東西，以及建議的優先順序。核心機制設計請見 `docs/GDD.md`。
 
 ---
 
@@ -20,7 +22,7 @@
 |---|---|---|---|
 | `scripts/entities/Player.gd` | ~~三角長袍+尖帽+法杖~~ **已完成（2026-10-12），見 §2.1a** | `AnimatedSprite2D`（`scripts/entities/PlayerSpriteAnimator.gd`） | 已完成。 |
 | `scripts/spells/SpellProjectile.gd` | 發光球體+環繞光點，顏色依 `impact` 類型變化（`orb_color`） | 一組法術彈道 Sprite | 新增 `Sprite2D` 子節點，`orb_color` 可保留用於 `modulate` 著色（若美術資源設計成灰階+程式上色，可沿用現有顏色邏輯）。 |
-| `scripts/entities/boss/Boss.gd`／`BossClone.gd` | 跟玩家同款法師造型（紅袍＋披風），`squash`/`idle_bob` 驅動擠壓與待機動畫，狀態機（`BossState` enum）控制讀氣/出招 | 怪物 `AnimatedSprite2D`（Idle/CloneSummon/Fireball/OrbBarrage/Hit 動畫） | 狀態機已存在且與美術無關，在狀態切換處加上動畫播放呼叫即可，狀態機邏輯不用改。招式的警示範圍指示（`BossFireball.gd` 等畫的範圍圈）建議保留程式繪圖，不建議做成美術資源——範圍指示通常用簡單幾何+shader 即時生成效果最好維護。 |
+| ~~`scripts/entities/boss/Boss.gd`／`BossClone.gd`~~ | **2026-10-13 boss 已整個刪除**，見 `docs/GDD.md`。新戰鬥系統的怪物/Boss 要重新設計，到時候再補這一列。 | — | — |
 | `scripts/core/Arena.gd` | 程式生成磚塊紋理（固定 seed 隨機明暗），三層同心圓結構 | Godot `TileMap` + `TileSet`，使用真正的石磚貼圖素材 | 整個場地從「程式畫的大圖」改成「TileMap 鋪真實磚塊貼圖」，牆體碰撞（`Main.tscn` 的 `Walls`）邏輯不受影響，可照舊沿用，只需外觀換成貼圖對齊。 |
 | `scripts/fx/MagicFX.gd` | `CPUParticles2D` 用純色圓點模擬粒子爆發/拖尾，地面類效果額外壓成橢圓（`GROUND_SQUASH`，呼應 3/4 俯視角視覺語言） | 美術設計的粒子貼圖（`texture` 屬性），或維持 `CPUParticles2D` 但換成含材質的版本 | `spawn_burst()`/`make_sparkle_trail()`/`spawn_explosion_ring()` 這些 helper 的參數介面（`parent, pos, color, amount, speed`）可完全不變，只需在內部幫 `CPUParticles2D` 加上 `texture` 屬性，呼叫端完全不用改。 |
 | UI（`Main.tscn`/`Lobby.tscn`） | 純 Godot 內建 `ProgressBar`/`Label`/`Button`，沒有自訂樣式 | 自訂 `Theme` 資源，套用美術設計的 UI 框架/字體/圖示 | Godot 的 `Theme` 系統可整組套用，不需逐個節點改，建議美術資源確定後直接做一份 `.tres` Theme 檔套用到各場景的 `UI` CanvasLayer 下所有節點。 |
@@ -57,7 +59,9 @@ AI 生成了 6 張 sprite sheet（4方向走路/4對角走路/蓄力/buff釋放/
 
 ## 3. 玩法/系統擴充清單
 
-以下項目依目前判斷的優先順序排列，只列目前真的還沒做的部分。
+> ⚠️ 2026-10-13：這份清單是舊戰鬥系統（吟唱讀條+超魔專長+Boss）的待辦，已被 `docs/GDD.md` §10 Prototype Scope 取代，純粹保留作歷史記錄。其中第1項「玩家 HP 系統」已經做完（見 `docs/GDD.md` 附註的「可直接沿用」清單），第2/9項提到的 Boss 已刪除。
+
+以下項目依目前判斷的優先順序排列，只列目前真的還沒做的部分（舊系統脈絡下）。
 
 ### 3.1 高優先（直接影響核心玩法驗證完整度）
 1. **玩家 HP 系統**：玩家被怪物攻擊目前只有視覺回饋（`Player.gd:take_damage()` 只閃光噴粒子），沒有實際扣血。要驗證「立回」這個 PVE 核心玩法，需要真正的生死壓力。
@@ -77,7 +81,8 @@ AI 生成了 6 張 sprite sheet（4方向走路/4對角走路/蓄力/buff釋放/
 
 ## 4. 本文件與其他文件的關係
 
-- `DESIGN.md`：核心機制、UI 系統、場地/視覺風格的現況參考。
-- `SPELL_SYSTEM.md`：法術系統架構（`Spell`/`SpellDelivery`/`SpellEffect`）現況參考。
-- `BOSS_DESIGN.md`：Demo boss 行動機制現況參考。
-- `ROADMAP.md`（本文件）：美術資源遷移路徑與玩法擴充清單，記錄還沒做、接下來要做什麼。
+- `GDD.md`：**目前的核心戰鬥設計文件**，動手改戰鬥邏輯前先讀這份。
+- `DEMO_PLAN.md`：實際的開發計畫，分 Phase 定義範圍/驗收標準/進度。
+- `SYSTEMS.md`：跟戰鬥轉型無關、持續運作中的系統參考（Dash/HP死亡/視覺風格/專案結構），取代已刪除的 `DESIGN.md`。
+- `SPELL_SYSTEM.md`：法術系統架構（`Spell`/`SpellDelivery`/`SpellEffect`）參考，三層分離架構仍在使用，當作新圖譜節點的實作基礎。
+- `ROADMAP.md`（本文件）：美術資源遷移路徑（§1/§2 仍適用）與舊玩法擴充清單（§3 已被取代）。

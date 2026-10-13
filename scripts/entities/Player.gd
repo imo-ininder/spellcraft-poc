@@ -5,16 +5,15 @@ extends CharacterBody2D
 ## 只剩腳下陰影（靜態，不隨狀態變化，見檔案底部）。
 @onready var sprite_animator: PlayerSpriteAnimator = $SpriteAnimator
 
+## 2026-10-13：GameState.gd（舊的法術總表/超魔專長表/裝備清單）跟著舊戰鬥系統一起刪除，見
+## docs/GDD.md。equipped_spells/equipped_spell 現在沒有任何東西會填值，維持空/null——
+## 下面吟唱相關的函式都已經補上 null 檢查，這是過渡期的刻意狀態，不是忘了接資料來源。
 func _ready() -> void:
 	add_to_group("player")
-	equipped_spells = GameState.get_equipped_or_default()
-	equipped_spell = equipped_spells[0]
 	queue_redraw() # 陰影是靜態的，只需要畫一次，不用每幀呼叫
 
 const SPEED := 130.0 # 原本260，使用者嫌跟boss都太快，砍半
 const COMBO_MAX_GAP := 0.15
-const RIGHTCLICK_CD := 3.0
-const INSTANT_CAST_DAMAGE_MULT := 0.8
 ## Dash 是短時間內的高速衝刺，不是瞬移（Blink）——用 move_and_slide() 讓它跟一般移動一樣貼牆滑行，
 ## 不是 move_and_collide() 那種單次跳到終點。DASH_SPEED*DASH_DURATION ＝ 總衝刺距離（2026-10-12
 ## 使用者要求從原本約220px改成50px，DASH_DURATION維持不變，直接用除法算出對應的速度，數值本身
@@ -58,10 +57,10 @@ signal died
 ## 獨立倒數（目前沒有任何法術要求疊加同類 buff，見 add_buff()）。
 var active_buffs: Array = []
 
-## 隱形術（InvisibilityEffect）直接讀寫這個欄位，不是算出來的——Boss.gd/BossFireball.gd/
-## BossOrb.gd/BossSuctionZone.gd 的 _find_player() 在這是 true 時一律回傳 null，讓 boss
-## 「找不到玩家」。施放任意法術會中斷隱形，判斷點在 _fire_spell()/_fire_instant_spell() 開頭，
-## 不是這個欄位自己的邏輯（中斷的是「玩家做了什麼」，不是倒數到期，兩件事分開處理）。
+## 隱形術（InvisibilityEffect）直接讀寫這個欄位，不是算出來的。2026-10-13 現況：舊的
+## boss 腳本（_find_player() 讀這個欄位判斷找不找得到玩家）跟舊的施法函式（會呼叫
+## _break_invisibility_on_cast() 中斷隱形）都已經刪除，這個欄位跟下面 _break_invisibility_on_cast()
+## 目前都是孤兒狀態，沒有任何東西在讀/寫/呼叫，等新系統有敵人/施法機制時再重新接上。
 var is_invisible := false
 
 ## 速度提升（SpeedBuffEffect）直接讀寫這個欄位。刻意跟 speed_multiplier（上面，Boss 吸引懲罰
@@ -113,36 +112,15 @@ var knockback_velocity := Vector2.ZERO
 func apply_knockback(force: Vector2) -> void:
 	knockback_velocity += force
 
-## 目前裝備的法術，順序對應輪盤各格，由 GameState.equipped_spells（大廳配置結果）在 _ready() 填入。
-## 數量不固定（DEMO_GOALS.md §2.5 的格數預算允許任意把數塞滿 6 格），輪盤的角度公式本來就支援任意數量。
+## 目前裝備的法術。2026-10-13：舊的大廳裝備流程（GameState.equipped_spells）跟輪盤切換
+## 系統一起刪除了，這兩個欄位現在沒有任何地方會填值——下面吟唱相關函式都已經補上 null
+## 檢查，左鍵/右鍵現在暫時什麼都不會發生，這是過渡期的刻意狀態（見 docs/GDD.md）。
 var equipped_spells: Array[Spell] = []
 var equipped_spell: Spell
 
-## 法術強效/法術增遠/法術擴展/法術極效縮放出來的複製品（_apply_scaling_feats()）要在這裡
-## 存一份強引用，不能只當 _fire_spell() 的區域變數——AoETargetingDelivery.fire() 內部有
-## await reticle.finished，複製品的 delivery 子物件如果在這段非同步等待期間完全沒有任何
-## 地方持有引用（區域變數在 _fire_spell() 返回後就離開作用域），GDScript 的協程機制不保證
-## 會把 self 算進引用計數裡，複製品有可能在等待選點確認的過程中被垃圾回收，之後玩家點擊
-## 確認、finished 訊號觸發時，協程所屬的物件已經不在了，不會有任何東西被恢復，paused 永遠
-## 卡 true——只有套用縮放（duplicate(true) 產生複製品）且剛好又是 await-based 的 delivery
-## （目前只有 AoETargetingDelivery）這個組合才會踩到，沒套用縮放時用的是 equipped_spell.delivery
-## 本身（被 equipped_spell 欄位長期持有，不會被回收）所以不會卡。這個欄位存在的唯一目的就是
-## 讓複製品在整段非同步流程期間都有一個不會消失的強引用持有者，不會被實際讀取用到。
-var _active_cast_spell: Spell
-
-## 法術切換輪盤狀態（DEMO_GOALS.md §3）：按住 Ctrl 彈出，子彈時間，滑鼠角度決定選中哪一格，
-## 放開 Ctrl 或點擊左鍵確認。輪盤只負責畫面呈現，選取判定在這裡做。
-var wheel_open := false
-var wheel_hover_index := -1
-var wheel_center := Vector2.ZERO
-var wheel_suppress_reopen := false
-
-signal spell_wheel_opened(center, current_index)
-signal spell_wheel_hover_changed(index)
-signal spell_wheel_closed(selected_index)
-
-# 超魔專長組合表搬到 GameState.ARCANE_FEATS（大廳的唯讀一覽分頁也需要讀這份表，見該檔案註解）。
-
+## 符文緩衝欄位，見 _handle_combo_key()——2026-10-13 起不再被 _process_casting() 呼叫
+## （舊的固定時長吟唱整個刪除，新系統沒有這個概念），目前是孤兒狀態，刻意保留骨架給
+## docs/DEMO_PLAN.md Phase 2 的符文系統重新接上，不要因為「目前沒人呼叫」就誤判成廢棄。
 const DIR_KEYS := {
 	"move_up": "U",
 	"move_down": "D",
@@ -150,31 +128,47 @@ const DIR_KEYS := {
 	"move_right": "R",
 }
 
-var is_casting := false
-var cast_timer := 0.0
-## 吟唱速度調整值的總和，0.0＝正常，+1.0＝+100%。實際吟唱時長＝base_cast_time / (1 + cast_speed_bonus)，
-## 不是直接線性扣減——`RR`/`LL` 超魔專長在吟唱途中即時調整，不是套在發射數值上
-var cast_speed_bonus := 0.0
 var combo_buffer := ""
 var pending_combo := ""
 var combo_last_input_time := 0.0
-var accumulated_feats: Array = []
-var rightclick_cd_timer := 0.0
 ## 三個 flash timer（失敗/成功/受擊）現在用來驅動 sprite_animator.modulate 的短暫變色，
 ## 不是改 _draw() 畫出來的袍子顏色了（_draw() 現在只剩靜態陰影），見 _update_sprite_tint()。
 var fail_flash_timer := 0.0
 var success_flash_timer := 0.0
 var hazard_flash_timer := 0.0
 
-signal cast_started
-signal cast_progress(ratio)
-signal cast_ended
-signal feat_added(feat_data)
 signal combo_failed
-signal rightclick_cd_updated(ratio)
 
-## 目前只有基礎 Dash（DEMO_GOALS.md §2.4 的「未裝備位移法術」分支）——還沒有任何位移類法術，
-## 「已裝備位移法術時改走 AoETargetingDelivery」那條分支留給之後真的有位移法術時再加。
+## === Phase 1（docs/DEMO_PLAN.md §5）：專注狀態殼 ===
+## 右鍵（instant_cast action）切換進出，世界時間跟著縮放（子彈時間，不是真的暫停——
+## 數值沿用舊法術輪盤用過的 0.25，見 docs/SYSTEMS.md）。這個 phase 只做「能不能順暢進出、
+## 時間縮放手感如何」，專注狀態下 WASD 不會移動角色，但還不會真的拿來輸入符文（Phase 2）。
+var is_focused := false
+const FOCUS_TIME_SCALE := 0.25
+
+## === Phase 1：普通攻擊三連段 + 蓄力火球（一般狀態下 cast_spell 的行為）===
+## tap（快按快放）＝近戰一下；按住超過 CHARGE_THRESHOLD 秒才放開＝蓄力火球。近戰判定複用
+## Boss 吸引懲罰用過的「不靠物理形狀、純算距離+朝向夾角」手法，對 "enemies" 群組成員判定。
+## 三段循環（combo_stage）這個 phase 刻意不做傷害/演出差異化，純粹先把循環骨架搭起來。
+## 全部數值都是佔位值，比照 CLAUDE.md「法術數值目前仍是 Demo 階段的示範值」的既有慣例。
+const MELEE_RANGE := 55.0
+const MELEE_HALF_ANGLE := 0.6 # 約70度張角
+const MELEE_DAMAGE := 8.0
+const MELEE_COOLDOWN := 0.35
+const CHARGE_THRESHOLD := 0.35
+const CHARGED_FIREBALL_DAMAGE := 12.0
+const CHARGED_FIREBALL_RANGE := 500.0
+const CHARGED_FIREBALL_SPEED := 600.0
+const CHARGED_FIREBALL_RADIUS := 70.0
+
+var combo_stage := 0
+var combo_cooldown_timer := 0.0
+var is_charging := false
+var charge_timer := 0.0
+
+## 目前只有基礎 Dash，見 docs/SYSTEMS.md §1——還沒有任何位移類法術，「裝備位移法術時改走
+## AoETargetingDelivery」那條分支留給之後真的有位移法術時再加（docs/FIRE_PROTOTYPE.md 的
+## 「火焰撤離」節點可能會是第一個用到這條分支的法術）。
 func _input(event: InputEvent) -> void:
 	if is_dead:
 		return
@@ -186,13 +180,11 @@ func _physics_process(delta: float) -> void:
 		return
 	_process_buffs(delta)
 
-	var ctrl_held := Input.is_key_pressed(KEY_CTRL)
-	if not ctrl_held:
-		wheel_suppress_reopen = false
-	if ctrl_held and not wheel_open and not wheel_suppress_reopen:
-		_open_wheel()
-	elif not ctrl_held and wheel_open:
-		_close_wheel()
+	## instant_cast action（右鍵）2026-10-13 起不再是法術瞬發，改成專注狀態的進出開關——
+	## 不管正在做什麼（移動/近戰/蓄力中）都能切換（符合 Fire Prototype §3「右鍵控制專注狀態
+	## 的進入與退出」，沒有排除條件）。
+	if Input.is_action_just_pressed("instant_cast"):
+		_toggle_focus()
 
 	if knockback_velocity.length() > 1.0:
 		_process_knockback(delta)
@@ -200,74 +192,39 @@ func _physics_process(delta: float) -> void:
 		_update_sprite_tint(delta)
 		return
 
-	if wheel_open:
-		dash_requested = false
-		is_dashing = false
-		velocity = Vector2.ZERO
-		move_and_slide()
-		_update_wheel_hover()
-		if Input.is_action_just_pressed("cast_spell"):
-			_close_wheel()
-			wheel_suppress_reopen = true
+	if is_focused:
+		_process_focused(delta)
 		_update_sprite_animation()
 		_update_sprite_tint(delta)
 		return
 
 	if dash_requested:
 		dash_requested = false
-		if not is_casting and not is_dashing:
+		if not is_dashing:
 			_start_dash()
+
+	if combo_cooldown_timer > 0.0:
+		combo_cooldown_timer -= delta
+	if is_charging:
+		charge_timer += delta
 
 	if is_dashing:
 		_process_dash(delta)
-	elif is_casting:
-		_process_casting(delta)
 	else:
 		_process_movement()
-
-	if rightclick_cd_timer > 0.0:
-		rightclick_cd_timer = max(0.0, rightclick_cd_timer - delta)
-		rightclick_cd_updated.emit(1.0 - rightclick_cd_timer / RIGHTCLICK_CD)
 
 	_update_sprite_animation()
 	_update_sprite_tint(delta)
 
-	if Input.is_action_just_pressed("cast_spell") and not is_casting:
-		_start_casting()
-	if Input.is_action_just_released("cast_spell") and is_casting:
-		_cancel_casting()
-
-	if Input.is_action_just_pressed("instant_cast") and rightclick_cd_timer <= 0.0:
-		_fire_instant_spell()
-
-## 彈出輪盤時取消任何進行中的吟唱——輪盤開啟時玩家唯一能做的操作是選法術，兩者不能同時進行。
-func _open_wheel() -> void:
-	wheel_open = true
-	wheel_hover_index = -1
-	wheel_center = get_viewport().get_mouse_position()
-	if is_casting:
-		_cancel_casting()
-	Engine.time_scale = 0.25
-	spell_wheel_opened.emit(wheel_center, equipped_spells.find(equipped_spell))
-
-## 用滑鼠相對輪盤中心的角度決定選中哪一格，跟 SpellWheel.gd 畫圖時用的角度基準一致（正上方＝第0格）。
-func _update_wheel_hover() -> void:
-	var offset := get_viewport().get_mouse_position() - wheel_center
-	var new_index := -1
-	if offset.length() >= SpellWheel.DEAD_ZONE:
-		var slice := TAU / float(equipped_spells.size())
-		var rel := fposmod(offset.angle() + PI / 2.0, TAU)
-		new_index = int(round(rel / slice)) % equipped_spells.size()
-	if new_index != wheel_hover_index:
-		wheel_hover_index = new_index
-		spell_wheel_hover_changed.emit(wheel_hover_index)
-
-func _close_wheel() -> void:
-	wheel_open = false
-	Engine.time_scale = 1.0
-	if wheel_hover_index >= 0:
-		equipped_spell = equipped_spells[wheel_hover_index]
-	spell_wheel_closed.emit(wheel_hover_index)
+	if Input.is_action_just_pressed("cast_spell") and not is_dashing:
+		is_charging = true
+		charge_timer = 0.0
+	if Input.is_action_just_released("cast_spell") and is_charging:
+		is_charging = false
+		if charge_timer >= CHARGE_THRESHOLD:
+			_fire_charged_fireball()
+		elif combo_cooldown_timer <= 0.0:
+			_perform_melee_hit()
 
 ## 基礎 Dash：短時間（DASH_DURATION）內用高速朝「目前移動方向」衝刺，不是朝滑鼠——滑鼠是瞄準法術用的，
 ## 跟移動方向是兩件不同的事，用滑鼠方向衝刺會很不自然。方向取目前按著的 WASD；站著不動時用
@@ -326,6 +283,64 @@ func _process_movement() -> void:
 	velocity = GroundProjection.projected_velocity(dir.normalized(), SPEED) * speed_multiplier * (1.0 + speed_boost_mult)
 	move_and_slide()
 
+## 右鍵切換進出專注狀態（docs/DEMO_PLAN.md Phase 1）。進入時清空符文緩衝/中斷衝刺跟蓄力——
+## 專注狀態是一個乾淨的新開始，不會帶著「剛好按到一半的蓄力」或「上一輪殘留的符文輸入」進來。
+## 退出時 Engine.time_scale 恢復正常；這個 phase 退出不會觸發任何法術效果（符文/圖譜還不存在，
+## Phase 2 開工前要先跟使用者確認「手動退出算不算施放」，見 docs/DEMO_PLAN.md §8）。
+func _toggle_focus() -> void:
+	is_focused = not is_focused
+	Engine.time_scale = FOCUS_TIME_SCALE if is_focused else 1.0
+	if is_focused:
+		is_dashing = false
+		is_charging = false
+		combo_buffer = ""
+		pending_combo = ""
+
+## 這個 phase 只做「WASD 不會移動角色」這個骨架（符文輸入判定是 Phase 2 的事），
+## 角色站在原地播待機動畫，見 _update_sprite_animation()。
+func _process_focused(_delta: float) -> void:
+	velocity = Vector2.ZERO
+	move_and_slide()
+
+## 近戰三連段的單次判定：朝滑鼠方向、距離+夾角判定（不靠物理形狀，複用舊 boss 吸引懲罰用過的
+## 手法）命中 MELEE_RANGE 內、朝向 MELEE_HALF_ANGLE 夾角內的所有 "enemies" 群組成員。
+## combo_stage 這個 phase 只負責循環（0→1→2→0），三段傷害/判定完全一樣，不做差異化演出
+## （docs/DEMO_PLAN.md Phase 1 明確排除項目），之後要做連段加成/不同演出再從這裡擴充。
+func _perform_melee_hit() -> void:
+	var aim := (get_global_mouse_position() - global_position)
+	var aim_dir := aim.normalized() if aim.length() > 0.01 else last_move_direction
+	for target in get_tree().get_nodes_in_group("enemies"):
+		if not target.has_method("take_damage"):
+			continue
+		var offset: Vector2 = target.global_position - global_position
+		if GroundProjection.projected_length(offset) > MELEE_RANGE:
+			continue
+		if offset.length() > 0.01 and absf(aim_dir.angle_to(offset)) > MELEE_HALF_ANGLE:
+			continue
+		target.take_damage(MELEE_DAMAGE)
+	combo_stage = (combo_stage + 1) % 3
+	combo_cooldown_timer = MELEE_COOLDOWN
+	facing_direction = _direction_name(aim_dir)
+	sprite_animator.play_one_shot("cast_release_attack")
+	MagicFX.spawn_burst(get_tree().current_scene, global_position + aim_dir * MELEE_RANGE * 0.5, Color(1, 0.6, 0.3), 10, 140.0)
+
+## 蓄力火球：一般狀態下按住 cast_spell 超過 CHARGE_THRESHOLD 秒才放開觸發。docs/DEMO_PLAN.md
+## 明講這個 phase 「先直接用 SpellProjectile.tscn+ProjectileDelivery 兜一顆最簡單的投射物即可，
+## 不用等 Phase 2 的圖譜資料結構」——這裡沒有透過 Spell/SpellDelivery Resource，直接手動組一顆
+## ExplosiveImpact 塞給 SpellProjectile.setup()，等 Phase 2/3 有了真正的 fire_graph.tres，
+## 這顆「Basic 火球術」的實作會被圖譜節點的 Spell 資源取代，不是定案的最終做法。
+func _fire_charged_fireball() -> void:
+	var dir := (get_global_mouse_position() - global_position).normalized()
+	var impact := ExplosiveImpact.new()
+	impact.radius = CHARGED_FIREBALL_RADIUS
+	var projectile_scene: PackedScene = load("res://scenes/spells/SpellProjectile.tscn")
+	var projectile := projectile_scene.instantiate()
+	get_tree().current_scene.add_child(projectile)
+	projectile.global_position = global_position
+	projectile.setup(dir, CHARGED_FIREBALL_DAMAGE, CHARGED_FIREBALL_RANGE, CHARGED_FIREBALL_SPEED, impact)
+	facing_direction = _direction_name(dir)
+	sprite_animator.play_one_shot("cast_release_attack")
+
 ## 把一個方向向量轉成 PlayerSpriteAnimator 的 8 方向動畫鍵名（"down"/"down_right"/...），
 ## 用 45 度一格的八分儀判斷，0 度＝正右方（Godot 螢幕座標 y 正方向朝下，所以角度 90 度＝正下方）。
 const DIRECTION_OCTANTS := ["right", "down_right", "down", "down_left", "left", "up_left", "up", "up_right"]
@@ -336,11 +351,12 @@ func _direction_name(dir: Vector2) -> String:
 	return DIRECTION_OCTANTS[octant]
 
 ## 照目前狀態決定 sprite_animator 要播哪個動畫——純粹讀取現有狀態欄位做選擇，不持有自己的
-## 狀態（跟讀條 CastBar.gd 同一個「純粹反映現有狀態」的慣例）。法術釋放/受擊的一次性動畫
-## 不在這裡觸發（那兩個是事件觸發，見 _finish_casting()/take_damage()），這裡呼叫
-## play_state() 即使在一次性動畫播放中也會被忽略，播完後下一幀自動接回這裡算出的狀態。
+## 狀態。法術釋放/受擊的一次性動畫不在這裡觸發（那兩個是事件觸發，見 _perform_melee_hit()/
+## _fire_charged_fireball()/take_damage()），這裡呼叫 play_state() 即使在一次性動畫播放中
+## 也會被忽略，播完後下一幀自動接回這裡算出的狀態。專注狀態／蓄力中都複用 cast_charge
+## 循環動畫（兩者視覺上都是「蓄力/專注中」，這個 phase 不特別區分演出）。
 func _update_sprite_animation() -> void:
-	if is_casting:
+	if is_focused or is_charging:
 		sprite_animator.play_state("cast_charge")
 	elif is_dashing or velocity.length() > 1.0:
 		sprite_animator.play_state("walk_" + facing_direction)
@@ -367,26 +383,9 @@ func _update_sprite_tint(delta: float) -> void:
 	else:
 		sprite_animator.modulate = Color(1, 1, 1)
 
-func _process_casting(delta: float) -> void:
-	velocity = Vector2.ZERO
-	# 時長倍率 = 1/(1+cast_speed_bonus)：+100% 速度時長變一半。時長變短＝消耗 cast_timer 的速率要反過來乘 (1+cast_speed_bonus)。
-	cast_timer -= delta * (1.0 + cast_speed_bonus)
-	cast_progress.emit(1.0 - max(cast_timer, 0.0) / equipped_spell.cast_time)
-
-	if combo_buffer.length() > 0:
-		var elapsed := Time.get_ticks_msec() / 1000.0 - combo_last_input_time
-		if pending_combo != "" and elapsed >= COMBO_MAX_GAP:
-			_commit_combo(pending_combo)
-		elif pending_combo == "" and elapsed > COMBO_MAX_GAP:
-			_fail_combo()
-
-	for action in DIR_KEYS.keys():
-		if Input.is_action_just_pressed(action):
-			_handle_combo_key(DIR_KEYS[action])
-
-	if cast_timer <= 0.0:
-		_finish_casting()
-
+## 2026-10-13：這個函式目前沒有任何呼叫點（舊的 _process_casting() 已經整個移除），刻意
+## 保留骨架給 docs/DEMO_PLAN.md Phase 2 的符文系統接上——屆時會從 _process_focused() 呼叫，
+## 「WASD 在專注狀態下讀成方向鍵輸入」這件事在這個 phase 還沒實作（明確排除項目）。
 func _handle_combo_key(key: String) -> void:
 	var now := Time.get_ticks_msec() / 1000.0
 
@@ -399,9 +398,14 @@ func _handle_combo_key(key: String) -> void:
 	combo_last_input_time = now
 	var attempt := combo_buffer + key
 
-	var is_exact := GameState.ARCANE_FEATS.has(attempt)
+	## 2026-10-13：原本查的 GameState.ARCANE_FEATS（超魔專長表）跟著舊戰鬥系統一起刪除了，
+	## 這裡的前綴比對骨架（is_exact/has_longer_prefix 判斷）刻意保留——之後符文系統要用
+	## 幾乎一樣的邏輯，只是查表對象會換成目前節點的合法符文表，先占著位置，不是忘了接資料。
+	## 現在永遠查不到任何序列，_handle_combo_key() 的輸入一律會落到 _fail_combo()。
+	const _PLACEHOLDER_SEQUENCES := {}
+	var is_exact: bool = _PLACEHOLDER_SEQUENCES.has(attempt)
 	var has_longer_prefix := false
-	for combo in GameState.ARCANE_FEATS.keys():
+	for combo in _PLACEHOLDER_SEQUENCES.keys():
 		if combo.length() > attempt.length() and combo.begins_with(attempt):
 			has_longer_prefix = true
 			break
@@ -422,30 +426,22 @@ func _handle_combo_key(key: String) -> void:
 
 	_fail_combo()
 
-func _commit_combo(key_string: String) -> void:
-	var feat = GameState.ARCANE_FEATS[key_string]
-	accumulated_feats.append(feat)
-	feat_added.emit(feat)
+## 2026-10-13：原本這裡查 GameState.ARCANE_FEATS 拿到 feat 字典、疊加 accumulated_feats／
+## cast_speed_bonus／發 feat_added 訊號，整套超魔專長數值縮放機制跟著舊系統一起刪除了。
+## 只留下「偵測到一組完整合法序列」的收尾動作（成功閃光＋清空緩衝＋特效），等符文系統設計好
+## 再回來接上真正的行為（key_string 目前完全沒被用到，先保留參數給之後用）。
+func _commit_combo(_key_string: String) -> void:
 	success_flash_timer = 0.2
 	combo_buffer = ""
 	pending_combo = ""
-	if feat.has("cast_speed_bonus"):
-		# clamp 在 -0.9，避免疊加太多減速專長讓 (1+cast_speed_bonus) 變成 0 或負數、讀條卡死或倒退
-		cast_speed_bonus = max(cast_speed_bonus + float(feat["cast_speed_bonus"]), -0.9)
-	MagicFX.spawn_burst(get_tree().current_scene, global_position + Vector2(0, -24), feat.get("color", Color.WHITE), 14, 160.0)
+	MagicFX.spawn_burst(get_tree().current_scene, global_position + Vector2(0, -24), Color.WHITE, 14, 160.0)
 
-## 給 scripts/SpellTestRange.gd 用的測試捷徑：跳過即時方向鍵輸入判定，直接視同這個超魔專長
-## 已經在這次吟唱中被成功觸發（呼叫到的仍是正式的 _commit_combo()，不是另外複製一份判定邏輯，
-## cast_speed_bonus／feat_added／特效全部照正式流程跑，只是觸發方式換成勾選而不是真的打鍵盤）。
+## 給 scripts/SpellTestRange.gd 用的測試捷徑：跳過即時方向鍵輸入判定，直接視同一組合法序列
+## 已經在這次吟唱中被觸發。
 func debug_force_feat(key_string: String) -> void:
 	_commit_combo(key_string)
 
-## 給 scripts/SpellTestRange.gd 的數值 before/after 除錯視窗用：不實際施放，只回傳「如果
-## 現在用這組 feats 施放，法術會被縮放成什麼樣子」的預覽複製品。呼叫的是正式的
-## _apply_scaling_feats()，不是另外複製一份縮放邏輯——純函式、沒有副作用，呼叫幾次都安全。
-func debug_preview_scaled_spell(feats: Array) -> Spell:
-	return _apply_scaling_feats(equipped_spell, feats)
-
+## 2026-10-13：原本的超魔專長數值縮放（_apply_scaling_feats()）跟著舊系統一起刪除了，
 func _fail_combo() -> void:
 	combo_buffer = ""
 	pending_combo = ""
@@ -453,122 +449,21 @@ func _fail_combo() -> void:
 	combo_failed.emit()
 	MagicFX.spawn_burst(get_tree().current_scene, global_position + Vector2(0, -24), Color(0.3, 0.3, 0.3), 8, 90.0)
 
-func _start_casting() -> void:
-	is_casting = true
-	cast_timer = equipped_spell.cast_time
-	cast_speed_bonus = 0.0
-	combo_buffer = ""
-	pending_combo = ""
-	accumulated_feats.clear()
-	cast_started.emit()
-
-func _cancel_casting() -> void:
-	is_casting = false
-	cast_ended.emit()
-
-func _finish_casting() -> void:
-	is_casting = false
-	# buff類（SelfBuffDelivery，例如隱形術/速度提升）用法杖舉高過頭的釋放動畫，其餘攻擊類
-	# 用法杖往前指的釋放動畫——看 equipped_spell 本身的 delivery 型別就夠，縮放専長（法術強效等）
-	# 只會動數值，不會換掉 delivery 的類別。
-	sprite_animator.play_one_shot("cast_release_buff" if equipped_spell.delivery is SelfBuffDelivery else "cast_release_attack")
-	_fire_spell(accumulated_feats)
-	cast_ended.emit()
-
-func _feat_to_effects(feat: Dictionary) -> Array:
-	var effects: Array = []
-	if feat.has("damage_mult"):
-		effects.append(DamageEffect.new(0.0, 0.0, float(feat["damage_mult"])))
-	return effects
-
-## DURATION 類效果（buff）跳過不呼叫 apply()——那條路徑是給 INSTANT 類效果疊加數值用的，
-## DURATION 類效果由 delivery（SelfBuffDelivery）直接拿 spell.base_effects 原始陣列
-## 呼叫 add_buff()，不經過這個攤平後的 stats dict，見 _fire_spell()/_fire_instant_spell()。
-## 吃一個 spell 參數（不是固定讀 equipped_spell）——法術強效/法術極效這類超魔專長要在
-## equipped_spell 的縮放複製品上算 stats，不是原本那份，見 _apply_scaling_feats()。
+## 2026-10-13：舊的「按住 cast_spell 固定時長吟唱」系統（is_casting/cast_timer/
+## _start_casting()/_cancel_casting()/_finish_casting()/_fire_spell()/_fire_instant_spell()）
+## 整個移除——新戰鬥系統裡，左鍵在一般狀態下是近戰/蓄力火球（見 _perform_melee_hit()/
+## _fire_charged_fireball()），在專注狀態下會是「立即施放目前節點法術」（Phase 2），兩者
+## 都不是「按住累積一段固定時間」的概念，沒有對應物可以保留骨架。equipped_spell/
+## equipped_spells 兩個欄位也跟著沒有用途了，但先不刪（之後符文圖譜可能需要類似概念）。
+##
+## _base_stats() 留著：從 Spell.base_effects 組出 stats dict 這個邏輯是通用的，
+## docs/DEMO_PLAN.md Phase 2/3 讓玩家施放圖譜節點法術時會直接重用這個函式。
 func _base_stats(spell: Spell) -> Dictionary:
 	var stats := {"damage": 0.0}
 	for effect in spell.base_effects:
 		if effect.apply_mode == SpellEffect.ApplyMode.INSTANT:
 			effect.apply(stats)
 	return stats
-
-## 法術迴響（echo）不是數值縮放，是「這次施放的效果重複一次」——不經過 _apply_scaling_feats()
-## 那套 duplicate(true) 複製邏輯（它沒有要改 Resource 任何欄位，不需要複製保護）。2026-10-12
-## 改成把 echo 當參數傳進 spell.delivery.fire()，不在這裡自己呼叫 fire() 兩次——「重複」具體
-## 要做什麼交給各個 delivery 自己決定（見 SpellDelivery.fire() 的參數註解）：AoETargetingDelivery
-## 只會開一次選點介面，重複的是「選好的點再爆炸一次」，不是「再選一次」；其餘 delivery 才是整串
-## 效果重跑一次。兩次效果共用同一份 stats（不重新 roll 傷害區間）——跟「量詞」類超魔專長
-## （法術強效縮放 count）同一個既有慣例：count=3 的魔法飛彈，3 發本來就共用同一個
-## stats.damage，不是各自獨立 roll，法術迴響比照辦理。
-func _fire_spell(feats: Array) -> void:
-	_break_invisibility_on_cast()
-	var spell := _apply_scaling_feats(equipped_spell, feats)
-	_active_cast_spell = spell # 見欄位註解：避免縮放複製品在 await 期間被回收
-	var stats := _base_stats(spell)
-	for f in feats:
-		for effect in _feat_to_effects(f):
-			effect.apply(stats)
-	var dir := (get_global_mouse_position() - global_position).normalized()
-	var echo := false
-	for f in feats:
-		if f.get("echo", false):
-			echo = true
-	spell.delivery.fire(self, dir, stats, spell.max_range, spell.base_effects, echo)
-
-## 法術強效/法術增遠/法術擴展/法術極效/法術延時都是「原地放大/最大化這次施放的法術數值」，
-## 不是像 damage_mult 那樣疊加獨立加成的效果——如果直接改 equipped_spell/delivery/base_effects
-## 任何一個欄位會污染共用的 .tres Resource（CLAUDE.md 架構規則1：Resource 是共享引用），
-## 之後這把法術、甚至其他角色裝備同一份資源都會被永久動到。沒有任何相關專長觸發時直接回傳
-## 原本的 spell，不用白白複製一份；一旦要縮放，整個 Spell（含 delivery/base_effects 底下
-## 每個 SpellEffect）都要是 duplicate(true) 深層複製出來的獨立複製品。縮放邏輯本身不在這裡
-## 判斷型別，交給各類別自己覆寫的 scale_potency()/scale_radius()/maximize()/scale_duration()
-## （見 SpellEffect.gd/SpellDelivery.gd/ProjectileImpact.gd），這裡只負責觸發。法術迴響
-## （echo）不在這裡處理——它不改任何 Resource 欄位，不需要複製保護，見 _fire_spell()。
-func _apply_scaling_feats(spell: Spell, feats: Array) -> Spell:
-	var potency_mult := 1.0
-	var range_mult := 1.0
-	var radius_mult := 1.0
-	var duration_mult := 1.0
-	var maximize := false
-	for f in feats:
-		if f.has("potency_mult"):
-			potency_mult *= float(f["potency_mult"])
-		if f.has("range_mult"):
-			range_mult *= float(f["range_mult"])
-		if f.has("radius_mult"):
-			radius_mult *= float(f["radius_mult"])
-		if f.has("duration_mult"):
-			duration_mult *= float(f["duration_mult"])
-		if f.get("maximize", false):
-			maximize = true
-
-	if potency_mult == 1.0 and range_mult == 1.0 and radius_mult == 1.0 and duration_mult == 1.0 and not maximize:
-		return spell
-
-	var scaled: Spell = spell.duplicate(true)
-	if range_mult != 1.0:
-		scaled.max_range *= range_mult
-	if radius_mult != 1.0:
-		scaled.delivery.scale_radius(radius_mult)
-	if potency_mult != 1.0:
-		scaled.delivery.scale_count(potency_mult)
-	for effect in scaled.base_effects:
-		if potency_mult != 1.0:
-			effect.scale_potency(potency_mult)
-		if duration_mult != 1.0:
-			effect.scale_duration(duration_mult)
-		if maximize:
-			effect.maximize()
-	return scaled
-
-func _fire_instant_spell() -> void:
-	_break_invisibility_on_cast()
-	rightclick_cd_timer = RIGHTCLICK_CD
-	var stats := _base_stats(equipped_spell)
-	stats.damage *= INSTANT_CAST_DAMAGE_MULT
-	var dir := (get_global_mouse_position() - global_position).normalized()
-	equipped_spell.delivery.fire(self, dir, stats, equipped_spell.max_range, equipped_spell.base_effects)
 
 func take_damage(amount: float) -> void:
 	if is_dead:
@@ -581,12 +476,15 @@ func take_damage(amount: float) -> void:
 	if hp <= 0.0:
 		_die()
 
-## 死亡：停止移動/吟唱/輸入（_physics_process()/_input() 開頭的 is_dead 檢查），不比照 Boss
-## 歸零重置滿血——這是真正的死亡，交給 died 訊號的接收端（Main.gd）顯示「你死了」畫面。
+## 死亡：停止移動/輸入（_physics_process()/_input() 開頭的 is_dead 檢查），不比照 Boss
+## 歸零重置滿血——這是真正的死亡，交給 died 訊號的接收端顯示死亡畫面。順便把專注狀態/
+## 子彈時間一起收掉，不然死在專注狀態中會卡在 0.25 倍速。
 func _die() -> void:
 	is_dead = true
-	is_casting = false
 	is_dashing = false
+	is_focused = false
+	is_charging = false
+	Engine.time_scale = 1.0
 	velocity = Vector2.ZERO
 	died.emit()
 
