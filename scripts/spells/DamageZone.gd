@@ -27,6 +27,11 @@ func setup(dmg: float, interval: float, dur: float, r: float, mode: int) -> void
 	duration = dur
 	radius = r
 	damage_mode = mode
+	## 2026-10-13（docs/BOSS_PROTOTYPE.md §5：「火焰地面應該影響 Boss 移動路徑」）：掛進
+	## "player_hazard_zone" 群組，給 FurnaceGuardian 的 Observe 逼近邏輯讀，繞開玩家擺在
+	## 地上的範圍（火焰地面/火牆火柱/火雨術都繼承或直接用這個類別，一次掛好）。純粹是給 Boss
+	## 讀的額外標籤，不影響這支檔案原本的傷害/畫法邏輯。
+	add_to_group("player_hazard_zone")
 	queue_redraw()
 
 func _process(delta: float) -> void:

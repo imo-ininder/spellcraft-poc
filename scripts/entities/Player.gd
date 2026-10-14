@@ -11,6 +11,7 @@ extends CharacterBody2D
 func _ready() -> void:
 	add_to_group("player")
 	current_node_id = current_graph.start_node_id
+	_spawn_position = global_position ## 給 respawn() 用，見該函式宣告處註解
 	queue_redraw() # 陰影是靜態的，只需要畫一次，不用每幀呼叫
 
 const SPEED := 130.0 # 原本260，使用者嫌跟boss都太快，砍半
@@ -59,6 +60,14 @@ var hp := MAX_HP
 var is_dead := false
 signal hp_changed(ratio)
 signal died
+
+## 2026-10-14 使用者要求：角色要能自動回血，「先 1 秒回 1 就好」——跟其他戰鬥數值一樣是
+## demo 階段示範值，不是最終平衡。套用 Engine.time_scale（子彈時間中回得比較慢），跟專案
+## 「沒有特別理由就不用真實時間」的既有慣例一致（focus_value 消耗用真實秒數是因為那個有
+## 明確設計理由，見該欄位宣告處註解，回血沒有同樣的理由）。
+const HP_REGEN_PER_SEC := 1.0
+## 給 respawn() 用：場景裡擺放的初始位置，_ready() 當下記錄一次。
+var _spawn_position := Vector2.ZERO
 
 ## === Phase 6（docs/DEMO_PLAN.md §10）：火焰護盾 ===
 ## ShieldSpell.cast() 直接呼叫 start_shield() 寫這兩個欄位，不經過 active_buffs/SpellEffect
@@ -245,7 +254,9 @@ const MELEE_DAMAGE := 8.0
 const MELEE_COOLDOWN := 0.35
 const CHARGE_THRESHOLD := 0.35
 const CHARGED_FIREBALL_DAMAGE := 12.0
-const CHARGED_FIREBALL_RANGE := 500.0
+const CHARGED_FIREBALL_RANGE := 200.0 ## 2026-10-14 使用者要求砍短（原 500）——500 遠超任何
+## Boss 攻擊距離，蓄力中又不限制移動，純後退放火球等於無成本風箏，見
+## docs/BOSS_PROTOTYPE.md Phase 6 第一筆回饋記錄。
 const CHARGED_FIREBALL_SPEED := 600.0
 const CHARGED_FIREBALL_RADIUS := 70.0
 
@@ -274,6 +285,11 @@ func _physics_process(delta: float) -> void:
 		shield_timer -= delta
 		if shield_timer <= 0.0:
 			shield_damage_mult = 1.0
+
+	## 自動回血：不管正在做什麼都照常回（跟護盾倒數同一個理由，不特別排除任何狀態）。
+	if hp < MAX_HP:
+		hp = min(MAX_HP, hp + HP_REGEN_PER_SEC * delta)
+		hp_changed.emit(hp / MAX_HP)
 
 	## 開關式右鍵，見上面 is_focused 欄位宣告處的完整邏輯說明。進專注之後 is_charging 被
 	## _enter_focus() 清掉（這份蓄力已經「用掉」），但 Input 的 just_released 判定讀的是
@@ -651,9 +667,10 @@ func take_dot_damage(amount: float) -> void:
 	if hp <= 0.0:
 		_die()
 
-## 死亡：停止移動/輸入（_physics_process()/_input() 開頭的 is_dead 檢查），不比照 Boss
-## 歸零重置滿血——這是真正的死亡，交給 died 訊號的接收端顯示死亡畫面。順便把專注狀態/
-## 子彈時間一起收掉，不然死在專注狀態中會卡在 0.25 倍速。
+## 死亡：停止移動/輸入（_physics_process()/_input() 開頭的 is_dead 檢查）。這支函式本身
+## 不會自動重置滿血/位置——死亡後要做什麼（顯示死亡畫面、原地重生……）交給 died 訊號的
+## 接收端決定，這個角色不替任何特定場景的玩法規則做假設。順便把專注狀態/子彈時間一起收掉，
+## 不然死在專注狀態中會卡在 0.25 倍速。
 func _die() -> void:
 	is_dead = true
 	is_dashing = false
@@ -664,22 +681,33 @@ func _die() -> void:
 	velocity = Vector2.ZERO
 	died.emit()
 
+## 2026-10-14（使用者要求）：原地重生——`scripts/BossTestRange.gd` 把這個函式接到
+## `died` 訊號（`player.died.connect(player.respawn)`），血量歸零後直接回到 `_ready()`
+## 記錄的 `_spawn_position`、補滿血、清掉 is_dead。這是測試場景專屬的行為，不是放進 _die()
+## 本體——其他場景（例如之後要做的死亡畫面）可以照自己的規則決定要不要接這個函式，兩者
+## 互不綁定。
+func respawn() -> void:
+	is_dead = false
+	hp = MAX_HP
+	global_position = _spawn_position
+	velocity = Vector2.ZERO
+	knockback_velocity = Vector2.ZERO
+	hp_changed.emit(1.0)
+
 ## 2026-10-12：角色本體（袍子/帽子/法杖/吟唱光環）改由 sprite_animator（PlayerSpriteAnimator）
 ## 顯示，這裡只剩腳下陰影——3/4視角風格的立體感來源，跟 Boss._draw_boss_body() 的陰影同一套
 ## 做法。陰影本身不隨任何狀態變化，只在 _ready() 呼叫一次 queue_redraw()，不需要每幀重畫。
 ##
-## 陰影中心 y 座標原本是 20（沿用改用 sprite 之前、手繪長袍版本的數字——那個版本的長袍底部畫
-## 在本地座標 y=18，陰影落在它正下方才合理）。换成 PlayerSpriteAnimator 之後，角色的「腳」
-## 不是畫在這個數字上——PlayerSpriteAnimator.TRANSFORM_BY_CATEGORY 裡每個動畫類別的 offset
-## 本來就是校正成「讓角色腳底落在節點原點（本地 y=0）」，陰影卻還留在舊版的 y=20，兩者對不上，
-## 才會看起來「陰影沒有貼在腳下」（明顯偏低、跟角色脫節）。改成 y=0 試過一次又踩到新坑：
-## 陰影形狀（半徑13x5橢圓）正好整個落在角色腳/褲管的不透明像素底下，被蓋住完全看不見——
-## 角色本人的深色褲管跟半透明黑色陰影疊在一起混成一塊，不是陰影沒畫出來，是畫出來了但被
-## 自己的腳蓋住、顏色又太接近。最後定案 y=10：陰影中心落在腳底下方一點，只有上緣被腳遮住，
-## 下緣露在地板上才看得見，視覺上才是「貼著腳、不是飄在空中也不是完全重疊」。
+## 2026-10-13：陰影一度為了閃避「被角色腳下深色像素蓋住看不見」的問題，把圓心從真正的判定點
+## （本地 y=0，也就是 global_position，所有地面系攻擊/Boss 距離判定都是拿這個點去比）往下
+## 挪到 y=10（純美術妥協，細節見 git 記錄）——但這樣一來陰影就不再是玩家拿來判斷「我是否站在
+## 攻擊範圍內」的準確依據了，跟判定點脫鉤。使用者要求陰影要能準確反映判定範圍，所以改回圓心
+## 畫在真正的判定點（y=0），同時把填滿的橢圓改成只畫外框線——外框線只有跟角色腳部像素重疊的
+## 那一小段會被蓋住，其餘部分照常露出來，不會像填滿版本整個消失，犧牲一點「像真的陰影」的
+## 寫實感，換取「貼在這圈線上就代表站在判定點附近」的精準度。
 func _draw() -> void:
 	var shadow_points := PackedVector2Array()
 	for i in range(20):
 		var a: float = TAU * float(i) / 20.0
-		shadow_points.append(Vector2(0, 10) + Vector2(cos(a) * 13.0, sin(a) * 5.0))
-	draw_colored_polygon(shadow_points, Color(0, 0, 0, 0.3))
+		shadow_points.append(Vector2(cos(a) * 13.0, sin(a) * 5.0))
+	draw_polyline(shadow_points + PackedVector2Array([shadow_points[0]]), Color(0, 0, 0, 0.5), 2.0, true)

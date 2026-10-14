@@ -9,6 +9,7 @@ Spellcraft PoC：法師版「魔物獵人」，純 PVE。Godot 4.6.2，GDScript�
 - `docs/DEMO_PLAN.md` — **目前實際的開發計畫**，分 Phase 定義範圍/驗收標準/進度，動手前先讀這份
 - `docs/GDD.md` — 整體方向設計文件
 - `docs/FIRE_PROTOTYPE.md` — 第一個原型的具體規格（符文/圖譜/數值）
+- `docs/BOSS_PROTOTYPE.md` — 使用者提供的 Prototype Boss（熔爐守衛）設計文件，頂端補了實作進度/這次自行判斷的設計決策記錄——**跟 `docs/BOSS_DESIGN.md`（已刪除）是兩份不同的文件，不要搞混**，那份是舊戰鬥系統時代的 boss 設計，這份是新系統下的全新 Prototype Boss
 - `docs/SPELL_SYSTEM.md` — 法術系統架構。2026-10-13 Phase 3 起：`SpellDelivery`/`SpellEffect` 那套通用組合**整組變成孤兒**，每個法術圖譜節點改成自己的 `Spell` 子類別（`FireballSpell`/`FireArrowSpell`/`FireGroundSpell`/`FireRainSpell`/`FireShieldSpell`/`FireRetreatSpell`/`FireWallSpell`）實作 `cast()`，只有真正不保證每種同類法術都需要的屬性才放共用中繼層（`ProjectileSpell`/`ZoneSpell`），`ProjectileImpact`（`ExplosiveImpact`/`PiercingImpact`）仍是真正在用的基礎設施
 - `docs/SYSTEMS.md` — 跟戰鬥核心轉型無關、持續運作中的系統技術參考（Dash、HP/死亡、視覺風格/GroundProjection、專案結構、Input Map）
 - `docs/ROADMAP.md` — 美術資源遷移路徑（§1/§2 仍適用，玩家角色已經是第一個落地案例）、舊玩法擴充清單（§3 已被取代）
@@ -16,7 +17,13 @@ Spellcraft PoC：法師版「魔物獵人」，純 PVE。Godot 4.6.2，GDScript�
 
 ## 目前進度
 
-**2026-10-13：Phase 0-4、6 都已完成，Phase 5 還沒開始**（使用者要求先把全部法術效果做完再做測試敵人升級，順序對調），細節/實作記錄見 `docs/DEMO_PLAN.md` §0/§5/§6/§7/§8/§10。目前場景仍然只有 `scenes/SpellTestRange.tscn`（`run/main_scene`）。
+**2026-10-13：Phase 0-4、6 都已完成，Phase 5 還沒開始**（使用者要求先把全部法術效果做完再做測試敵人升級，順序對調），細節/實作記錄見 `docs/DEMO_PLAN.md` §0/§5/§6/§7/§8/§10。
+
+**同一天另外開了一條線**：使用者提供了全新的 Prototype Boss 設計文件（`docs/BOSS_PROTOTYPE.md`，跟 `docs/DEMO_PLAN.md` 的 Phase 5「測試敵人升級」概念上是同一件事，但這次是直接拿使用者給的完整設計文件做，沒有照 `DEMO_PLAN.md` 原本規劃的方式走）。**該文件自己的 Phase 1–5 都已完成，只剩 Phase 6（調整與觀察）刻意留白**（需要真人實測回饋才有意義調整，不是能自己決定的事）：`scripts/entities/boss/FurnaceGuardian.gd` 現在有完整四狀態機 + 三招等權重隨機（橫掃/熔岩重擊/熔爐衝鋒）、Observe 會朝玩家移動並閃避玩家放的範圍法術（`_hazard_avoidance_offset()`）、熔岩重擊前搖有弱點暴露加成傷害（`WEAK_POINT_DAMAGE_MULT`）、右鍵子彈時間直接沿用全域 `Engine.time_scale` 自動同步 Boss 節奏不用額外寫。`scenes/BossTestRange.tscn` 現在 Boss + 玩家 + FocusHUD/StatusBars 都在。細節/設計決策/每個 Phase 的驗證方式見 `docs/BOSS_PROTOTYPE.md` 開頭的實作進度記錄。
+
+另外使用者主動提出兩個判定準確度問題，都已處理：**地面攻擊用單點精準判定、近戰揮擊要算進玩家身體範圍**（`FurnaceGuardian.PLAYER_HIT_RADIUS`，只加在橫掃/衝鋒這類攻擊上）、**玩家陰影要準確對齊真正的判定點**（`Player.gd` 的陰影圓心改回真正判定點並改畫外框線，不然填滿橢圓會被角色腳部像素蓋住看不見）。
+
+目前專案有兩個場景：`scenes/SpellTestRange.tscn`（`run/main_scene`，法術測試場）、`scenes/BossTestRange.tscn`（Boss 單獨觀察場，要手動指定 scene path 開啟，不是預設啟動場景）。
 
 已經能動的東西：移動、近戰三連段、蓄力火球、右鍵進出專注狀態（子彈時間，**開關式**——左鍵蓄力到 `CHARGE_THRESHOLD` 之後按右鍵進入，專注中再按一次右鍵＝取消不施放，**出招的唯一觸發點是左鍵放開**（左鍵要從蓄力階段全程按住，右鍵只負責開關子彈時間，不負責出招），沒蓄力到位按右鍵完全沒反應，防止空手連點右鍵免成本連續出招——這個語意改過四輪，完整過程見 `docs/DEMO_PLAN.md` §6 的「事後修正」）、專注狀態下用 WASD 打符文（`UU`/`DD`/`LL`/`RR`）沿 `resources/spells/fire/fire_graph.tres` 這張圖切換 `Player.current_node_id`。`scripts/ui/FocusHUD.gd`／`scenes/ui/FocusHUD.tscn` 顯示目前節點名稱＋符文成功/失敗回饋（只在專注中出現，情境資訊）。**專注狀態現在有真正的資源限制了**（Phase 4）：`Player.focus_value`（`FOCUS_MAX=5.0`）進專注後用真實（未被子彈時間縮放）的秒數持續消耗，耗盡會強制施放目前節點並退出（跟左鍵放開同一個出口），退出後隨時間回滿；進專注除了左鍵蓄力門票，現在還多一條 `focus_value > 0.0` 才能進。
 
